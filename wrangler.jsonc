@@ -1,0 +1,54 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cfemail",
+  "main": "worker/build/worker/shim.mjs",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "build": {
+    "command": "npm run web:build && npm run worker:build"
+  },
+
+  "assets": {
+    "directory": "./web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+
+  "vars": {
+    "PRIMARY_DOMAIN": "middleseat.vc",
+    "ADDITIONAL_DOMAINS": "",
+    "APP_NAME": "cfemail",
+    "SESSION_TTL_DAYS": "30"
+  },
+
+  "send_email": [
+    { "name": "EMAIL" }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "REGISTRY", "class_name": "RegistryDO" },
+      { "name": "MAILBOX",  "class_name": "MailboxDO"  }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RegistryDO", "MailboxDO"]
+    }
+  ],
+
+  "r2_buckets": [
+    { "binding": "BLOBS", "bucket_name": "cfemail-blobs" }
+  ],
+
+  "kv_namespaces": [
+    { "binding": "CONFIG", "id": "REPLACE_WITH_KV_ID" }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+}

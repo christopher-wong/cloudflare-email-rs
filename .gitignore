@@ -1,0 +1,32 @@
+# Rust
+/target
+**/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Node
+node_modules
+dist
+.vite
+*.log
+
+# Wrangler
+.wrangler
+.dev.vars
+.dev.vars.*
+wrangler.local.jsonc
+
+# Build artifacts
+/worker/build
+/web/dist
+
+# Editor
+.vscode
+.idea
+.DS_Store
+
+# Secrets
+*.pem
+*.key
+.env
+.env.local
