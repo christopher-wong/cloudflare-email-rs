@@ -1,0 +1,18 @@
+{
+  "name": "cfemail",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Open-source email web app on Cloudflare — passkey auth, E2E body encryption, Workers + Durable Objects.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "npm --prefix web run build && wrangler deploy",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
+    "worker:build": "bash scripts/build-worker.sh",
+    "build": "npm run web:build && npm run worker:build",
+    "typecheck": "npm --prefix web run typecheck"
+  },
+  "devDependencies": {
+    "wrangler": "^4.94.0"
+  }
+}

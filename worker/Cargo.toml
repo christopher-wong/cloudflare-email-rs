@@ -1,0 +1,57 @@
+[package]
+name = "cfemail-worker"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Pinned to a workers-rs main commit because:
+#   1. `#[event(email)]` + the email() handler API was added after the
+#      published 0.8.3 release.
+#   2. The published 1.0.0 was yanked.
+# Pin to the merge commit of cloudflare/workers-rs#715 ("Implement email
+# worker functionality") so the email handler is available.
+worker = { git = "https://github.com/cloudflare/workers-rs.git", rev = "3d0903aac3332a69ed5393d5a6cceb9ddb2f17b4", features = ["http"] }
+worker-macros = { git = "https://github.com/cloudflare/workers-rs.git", rev = "3d0903aac3332a69ed5393d5a6cceb9ddb2f17b4" }
+console_error_panic_hook = "0.1"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_bytes = "0.11"
+
+# Body reading on the http feature comes through http-body's BodyExt::collect.
+http-body-util = "0.1"
+futures-util = "0.3"
+
+# Crypto: X25519 ECDH + XChaCha20-Poly1305 AEAD = NaCl-style sealed box
+x25519-dalek = { version = "2", default-features = false, features = ["alloc", "static_secrets", "zeroize"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+hkdf = "0.12"
+sha2 = "0.10"
+hmac = "0.12"
+rand_core = { version = "0.6", features = ["getrandom"] }
+getrandom = { version = "0.2", features = ["js"] }
+zeroize = "1"
+
+# WebAuthn verification primitives
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "alloc"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
+rsa = { version = "0.9", default-features = false, features = ["sha2"] }
+ciborium = "0.2"
+
+# MIME
+mail-parser = { version = "0.9", default-features = false }
+mail-builder = { version = "0.4", default-features = false }
+
+# Encoding
+base64 = "0.22"
+hex = "0.4"
+urlencoding = "2.1"
+
+# Time / IDs
+chrono = { version = "0.4", default-features = false, features = ["alloc", "wasmbind"] }
+# (KSUIDs handled in-tree at worker/src/ids.rs — see comment there)
+
+thiserror = "1"

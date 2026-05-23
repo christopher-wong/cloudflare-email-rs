@@ -1,54 +1,81 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "cfemail",
-  "main": "worker/build/worker/shim.mjs",
-  "compatibility_date": "2025-06-01",
-  "compatibility_flags": ["nodejs_compat"],
-
-  "build": {
-    "command": "npm run web:build && npm run worker:build"
-  },
-
-  "assets": {
-    "directory": "./web/dist",
-    "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
-  },
-
-  "vars": {
-    "PRIMARY_DOMAIN": "middleseat.vc",
-    "ADDITIONAL_DOMAINS": "",
-    "APP_NAME": "cfemail",
-    "SESSION_TTL_DAYS": "30"
-  },
-
-  "send_email": [
-    { "name": "EMAIL" }
-  ],
-
-  "durable_objects": {
-    "bindings": [
-      { "name": "REGISTRY", "class_name": "RegistryDO" },
-      { "name": "MAILBOX",  "class_name": "MailboxDO"  }
-    ]
-  },
-
-  "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": ["RegistryDO", "MailboxDO"]
-    }
-  ],
-
-  "r2_buckets": [
-    { "binding": "BLOBS", "bucket_name": "cfemail-blobs" }
-  ],
-
-  "kv_namespaces": [
-    { "binding": "CONFIG", "id": "REPLACE_WITH_KV_ID" }
-  ],
-
-  "observability": {
-    "enabled": true
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "cfemail",
+	"main": "worker/build/worker/shim.mjs",
+	"compatibility_date": "2025-06-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"build": {
+		// Run from the project root. `wrangler dev` / `wrangler deploy` must
+		// therefore be invoked from the project root too — `npm run dev` and
+		// `make dev` already handle that. Wrangler doesn't expose a template
+		// variable for the config file's own directory, so we can't make the
+		// command self-locating from arbitrary subdirs.
+		"command": "npm run web:build && npm run worker:build"
+	},
+	"assets": {
+		"directory": "./web/dist",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application"
+	},
+	"vars": {
+		// The email domain (right-hand side of every mailbox address).
+		"PRIMARY_DOMAIN": "middleseat.vc",
+		// Extra domains owned by this instance, comma-separated. Optional.
+		"ADDITIONAL_DOMAINS": "",
+		// The host the web app is served from. Used as the WebAuthn RP ID and as
+		// the expected origin in passkey ceremonies. May differ from the email
+		// domain (e.g. mail.middleseat.vc serving christopher@middleseat.vc).
+		"APP_HOST": "mail.middleseat.vc",
+		"APP_NAME": "cfemail",
+		"SESSION_TTL_DAYS": "30"
+	},
+	"routes": [
+		{
+			"pattern": "mail.middleseat.vc",
+			"custom_domain": true
+		}
+	],
+	"send_email": [
+		{
+			"name": "EMAIL"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "REGISTRY",
+				"class_name": "RegistryDO"
+			},
+			{
+				"name": "MAILBOX",
+				"class_name": "MailboxDO"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"RegistryDO",
+				"MailboxDO"
+			]
+		}
+	],
+	"r2_buckets": [
+		{
+			"bucket_name": "cfemail-blobs",
+			"binding": "BLOBS"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "CONFIG",
+			"id": "4c9f2e752d244c70a471d665fd5e5612"
+		},
+	],
+	"observability": {
+		"enabled": true
+	}
 }
