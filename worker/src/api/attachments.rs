@@ -70,6 +70,27 @@ pub async fn upload(mut req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiRes
     }))
 }
 
+/// List attachments for a single message. The frontend hits this once
+/// per thread render and decrypts filenames client-side.
+pub async fn list_for_message(
+    req: HttpRequest,
+    env: &Env,
+    _cfg: &AppConfig,
+) -> ApiResult<Response> {
+    let s = require_auth(&req, env).await?;
+    // Path is /api/messages/:id/attachments — split the second-to-last
+    // segment out instead of using last_segment.
+    let path = req.uri().path().to_string();
+    let msg_id = path
+        .strip_prefix("/api/messages/")
+        .and_then(|rest| rest.strip_suffix("/attachments"))
+        .ok_or_else(|| ApiError::BadRequest("message id".into()))?
+        .to_string();
+    let stub = mailbox_stub(env, &s.user_id)?;
+    let path = format!("/attachments?message_id={}", urlencoding::encode(&msg_id));
+    super::stub_passthrough(&stub, Method::Get, &path, None).await
+}
+
 pub async fn download(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<Response> {
     let s = require_auth(&req, env).await?;
     let id = super::last_segment(&req)

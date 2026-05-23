@@ -10,6 +10,16 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
     let path = req.uri().path().to_string();
     let method = req.method().as_str().to_string();
 
+    // Apple App Site Association — required for cross-platform passkey
+    // operations to work in a companion native iOS app (WebCredentials
+    // federation). Apple's prober fetches this exact path and refuses
+    // passkey operations for the RP if the response isn't a plain JSON
+    // document at the right Content-Type. No redirects, no auth, no
+    // SPA fallback — handle it before the asset shim.
+    if path == "/.well-known/apple-app-site-association" && method == "GET" {
+        return aasa_response();
+    }
+
     if !path.starts_with("/api/") {
         return serve_assets(env, req).await;
     }
@@ -61,6 +71,9 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
         ("POST", "/api/message-labels") => api::labels::toggle(req, &env, &cfg).await,
 
         ("POST", "/api/attachments") => api::attachments::upload(req, &env, &cfg).await,
+        ("GET", p) if p.starts_with("/api/messages/") && p.ends_with("/attachments") => {
+            api::attachments::list_for_message(req, &env, &cfg).await
+        }
         ("GET", p) if p.starts_with("/api/attachments/") => api::attachments::download(req, &env, &cfg).await,
         ("DELETE", p) if p.starts_with("/api/attachments/") => api::attachments::delete(req, &env, &cfg).await,
 
@@ -81,6 +94,19 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
         Ok(r) => Ok(r),
         Err(e) => error::to_response(e),
     }
+}
+
+fn aasa_response() -> Result<Response> {
+    // The associated-domains body. Hardcoded here rather than read from
+    // a var because (a) the App ID rarely changes, (b) Apple cares about
+    // exact bytes, and (c) it keeps a misconfigured wrangler.jsonc from
+    // silently breaking passkey federation. Edit if your Apple Team ID
+    // / bundle ID changes.
+    const BODY: &str = r#"{"webcredentials":{"apps":["L6678C3HLZ.middleseat.bmail"]}}"#;
+    let mut resp = Response::ok(BODY)?;
+    resp.headers_mut()
+        .set("Content-Type", "application/json")?;
+    Ok(resp)
 }
 
 async fn serve_assets(env: Env, req: HttpRequest) -> Result<Response> {

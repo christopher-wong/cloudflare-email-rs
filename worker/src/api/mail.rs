@@ -133,9 +133,22 @@ struct SendReq {
     html: Option<String>,
     in_reply_to: Option<String>,
     references: Option<String>,
-    /// Optional R2 keys for attachments (already uploaded via /api/attachments).
+    /// Attachments referenced by R2 key. Each entry carries the original
+    /// filename twice: plain (used in outbound MIME so the recipient sees
+    /// a real name) and ciphertext (sealed to the user's own pubkey, used
+    /// for the sender's at-rest copy in the DO).
     #[serde(default)]
-    attachment_r2_keys: Vec<String>,
+    attachments: Vec<AttachmentRef>,
+}
+
+#[derive(Deserialize, Clone)]
+struct AttachmentRef {
+    r2_key: String,
+    /// PLAIN filename — used in outbound MIME headers only.
+    filename: String,
+    /// Sealed filename — what we store in the sender's mailbox row.
+    filename_ct_b64: Option<String>,
+    mime: String,
 }
 
 #[derive(Serialize)]
@@ -228,7 +241,7 @@ pub async fn send(mut req: HttpRequest, env: &Env, cfg: &AppConfig) -> ApiResult
                 "message_id": msg_id,
                 "draft_id": null,
                 "r2_key": att.r2_key,
-                "filename_ct_b64": null,
+                "filename_ct_b64": att.filename_ct_b64,
                 "mime": att.mime,
                 "size_bytes": att.size,
             })),
@@ -282,6 +295,7 @@ mod outbound {
         pub r2_key: String,
         pub mime: String,
         pub size: i64,
+        pub filename_ct_b64: Option<String>,
     }
 
     pub(super) async fn send(
@@ -297,18 +311,14 @@ mod outbound {
         let r2 = env
             .bucket("BLOBS")
             .map_err(|e| ApiError::Internal(format!("R2 binding: {e}")))?;
-        let mut atts: Vec<(String, String, Vec<u8>, i64)> = Vec::new();
-        for key in &req.attachment_r2_keys {
+        let mut atts: Vec<(String, String, Vec<u8>, i64, Option<String>)> = Vec::new();
+        for att in &req.attachments {
             let obj = r2
-                .get(key)
+                .get(&att.r2_key)
                 .execute()
                 .await
                 .map_err(|e| ApiError::Internal(format!("R2 get: {e}")))?
                 .ok_or_else(|| ApiError::NotFound)?;
-            let mime = obj
-                .http_metadata()
-                .content_type
-                .unwrap_or_else(|| "application/octet-stream".to_string());
             let bytes = obj
                 .body()
                 .ok_or_else(|| ApiError::Internal("R2 body".into()))?
@@ -316,8 +326,13 @@ mod outbound {
                 .await
                 .map_err(|e| ApiError::Internal(format!("R2 body bytes: {e}")))?;
             let size = bytes.len() as i64;
-            let name = key.rsplit('/').next().unwrap_or("attachment").to_string();
-            atts.push((name, mime.clone(), bytes, size));
+            atts.push((
+                att.filename.clone(),
+                att.mime.clone(),
+                bytes,
+                size,
+                att.filename_ct_b64.clone(),
+            ));
         }
 
         // Compose MIME.
@@ -347,7 +362,7 @@ mod outbound {
         if let Some(refs) = &req.references {
             builder = builder.references(refs.as_str());
         }
-        for (name, mime, bytes, _) in &atts {
+        for (name, mime, bytes, _, _) in &atts {
             builder = builder.attachment(mime.as_str(), name.as_str(), bytes.as_slice());
         }
         let raw = builder
@@ -373,13 +388,14 @@ mod outbound {
                 .map_err(|e| ApiError::Internal(format!("send: {}", worker::Error::from(e))))?;
         }
 
-        let meta = atts
+        let meta: Vec<AttMeta> = atts
             .into_iter()
-            .zip(req.attachment_r2_keys.iter())
-            .map(|((_, mime, _, size), key)| AttMeta {
-                r2_key: key.clone(),
+            .zip(req.attachments.iter())
+            .map(|((_, mime, _, size, filename_ct_b64), att)| AttMeta {
+                r2_key: att.r2_key.clone(),
                 mime,
                 size,
+                filename_ct_b64,
             })
             .collect();
         Ok((message_id.to_string(), meta))
