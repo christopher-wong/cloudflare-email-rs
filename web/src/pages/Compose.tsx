@@ -88,6 +88,13 @@ export default function Compose() {
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
+  // Tell Chromium to wrap new paragraphs in <p> instead of <div>. Combined
+  // with the lazy-seed in cmd() below, this makes formatBlock + list
+  // commands behave consistently the first time the user clicks one.
+  useEffect(() => {
+    try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch {}
+  }, []);
+
   /**
    * Run a formatting command against the contentEditable selection, then
    * sync our React-side `body` to the resulting innerHTML so autosave and
@@ -99,6 +106,29 @@ export default function Compose() {
     const el = bodyRef.current;
     if (!el) return;
     el.focus();
+
+    // Block-level commands (lists, blockquote, code-block) need an
+    // existing block ancestor for the cursor; Chrome silently no-ops if
+    // the editable has only raw text nodes. Seed one lazily — wrap
+    // whatever is in the editable in a <p> and move the cursor to its
+    // end before invoking. This keeps the editable's HTML clean for
+    // people who never use formatting (we don't pre-seed an empty <p>
+    // on mount).
+    if (BLOCK_COMMANDS.has(name) && !el.querySelector(BLOCK_TAGS)) {
+      const p = document.createElement('p');
+      while (el.firstChild) p.appendChild(el.firstChild);
+      if (p.childNodes.length === 0) p.appendChild(document.createElement('br'));
+      el.appendChild(p);
+      const sel = window.getSelection();
+      if (sel) {
+        const r = document.createRange();
+        r.selectNodeContents(p);
+        r.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+    }
+
     // formatBlock specifically wants the value wrapped in angle brackets
     // across browser engines (`<blockquote>`, not `blockquote`). Other
     // commands take their value as-is (createLink → URL string).
@@ -112,16 +142,46 @@ export default function Compose() {
     setBody(el.innerHTML);
   };
 
+  /**
+   * Wrap the current selection (or, with a collapsed cursor, an empty
+   * inline tag containing a zero-width space) so the user can type into
+   * the wrapped region. execCommand('insertHTML', '<code>code</code>')
+   * — the previous implementation — literally wrote the word "code" as
+   * placeholder text, which is what the user saw.
+   */
   const wrapInline = (tag: 'code') => {
     const el = bodyRef.current;
     if (!el) return;
     el.focus();
     const sel = window.getSelection();
-    const text = sel?.toString() ?? '';
-    if (!text) {
-      document.execCommand('insertHTML', false, `<${tag}>code</${tag}>`);
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+
+    if (!range.collapsed) {
+      const node = document.createElement(tag);
+      node.appendChild(range.extractContents());
+      range.insertNode(node);
+      // Put the caret right after the new wrap so the user can keep
+      // typing in non-code formatting.
+      const after = document.createRange();
+      after.setStartAfter(node);
+      after.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(after);
     } else {
-      document.execCommand('insertHTML', false, `<${tag}>${escapeHtml(text)}</${tag}>`);
+      // Empty cursor — insert <tag>​</tag> and place the caret
+      // *inside* the tag so subsequent keystrokes extend it. The ZWS
+      // is necessary because empty inline elements collapse out of
+      // contentEditable rendering.
+      const node = document.createElement(tag);
+      const zws = document.createTextNode('​');
+      node.appendChild(zws);
+      range.insertNode(node);
+      const inside = document.createRange();
+      inside.setStart(zws, 1);
+      inside.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(inside);
     }
     setBody(el.innerHTML);
   };
@@ -375,6 +435,16 @@ export default function Compose() {
     </form>
   );
 }
+
+/** execCommand names that operate on block ancestors (not inline ranges). */
+const BLOCK_COMMANDS = new Set([
+  'insertUnorderedList',
+  'insertOrderedList',
+  'formatBlock',
+]);
+
+/** CSS selector matching block-level tags execCommand recognizes as block ancestors. */
+const BLOCK_TAGS = 'p, div, blockquote, ul, ol, pre, h1, h2, h3, h4, h5, h6';
 
 function FmtBtn({
   label,
