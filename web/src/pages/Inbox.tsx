@@ -217,9 +217,15 @@ export default function Inbox() {
   }, []);
 
   const labelFor = (t: api.ThreadRow): string => {
-    // For an inbound-first thread we show the sender; for an outbound-first
-    // thread we show "to <other parties>". Falls back to all participants.
-    if (t.first_direction === 'in' && t.first_from_addr) return t.first_from_addr;
+    // For an inbound-first thread, prefer the parsed display name from the
+    // sender's From header — most senders set one, and "Christopher Wong"
+    // is friendlier than "christopherwong@hey.com" in an inbox row.
+    // Fall back to the address when there's no name, and finally to the
+    // participants list for outbound-first threads.
+    if (t.first_direction === 'in') {
+      if (t.first_from_name) return t.first_from_name;
+      if (t.first_from_addr) return t.first_from_addr;
+    }
     const others = t.participants.filter((a) => !ownAddresses.has(a.toLowerCase()));
     const list = others.length > 0 ? others : t.participants;
     if (list.length === 0) return '(no participants)';
@@ -313,22 +319,18 @@ export default function Inbox() {
                 key={t.id}
                 ref={(el) => { rowRefs.current[i] = el; }}
                 className={
-                  'row row-mselect ' +
+                  'row ' +
                   (t.unread_count > 0 ? 'unread ' : '') +
                   (isSelected ? 'inv ' : '') +
                   (selected.has(t.id) ? 'selected' : '')
                 }
                 onClick={() => nav(`/thread/${t.id}`)}
               >
-                <input
-                  type="checkbox"
-                  className="cursor-pointer"
-                  checked={selected.has(t.id)}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={() => toggleSelected(t.id)}
-                  aria-label={`select thread from ${sender}`}
+                <Avatar
+                  seed={t.first_from_addr ?? sender}
+                  selected={selected.has(t.id)}
+                  onToggle={() => toggleSelected(t.id)}
                 />
-                <Avatar seed={t.first_from_addr ?? sender} />
                 <div className="min-w-0">
                   {/* Top row: bold sender on the left, count + star chips
                       on the right of the same line. */}

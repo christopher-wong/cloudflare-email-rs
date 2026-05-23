@@ -87,6 +87,9 @@ export interface ThreadRow {
   first_snippet_ct_b64: string | null;
   /** from_addr of the first message. Use with first_direction to label rows. */
   first_from_addr: string | null;
+  /** Display name parsed from the first message's From header, if any.
+   *  Prefer this for the row label; fall back to `first_from_addr`. */
+  first_from_name: string | null;
   /** "in" or "out" — direction of the first message in the thread. */
   first_direction: 'in' | 'out' | null;
   participants: string[];

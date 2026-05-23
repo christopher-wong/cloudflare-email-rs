@@ -323,6 +323,7 @@ impl MailboxDO {
             #[serde(with = "serde_bytes", default)]
             snippet_ct: Option<Vec<u8>>,
             from_addr: String,
+            from_name: Option<String>,
             direction: String,
         }
         for r in rows {
@@ -331,22 +332,23 @@ impl MailboxDO {
             let firsts: Vec<First> = self
                 .sql()
                 .exec(
-                    "SELECT subject_ct, snippet_ct, from_addr, direction
+                    "SELECT subject_ct, snippet_ct, from_addr, from_name, direction
                      FROM messages
                      WHERE thread_id = ?
                      ORDER BY sent_at ASC LIMIT 1",
                     Some(vec![r.id.clone().into()]),
                 )?
                 .to_array()?;
-            let (first_subject, first_snippet, first_from, first_dir) =
+            let (first_subject, first_snippet, first_from, first_from_name, first_dir) =
                 match firsts.into_iter().next() {
                     Some(f) => (
                         Some(crate::b64::url_encode(&f.subject_ct)),
                         f.snippet_ct.as_deref().map(crate::b64::url_encode),
                         Some(f.from_addr),
+                        f.from_name.filter(|s| !s.is_empty()),
                         Some(f.direction),
                     ),
-                    None => (None, None, None, None),
+                    None => (None, None, None, None, None),
                 };
             out.push(ThreadRow {
                 id: r.id,
@@ -354,6 +356,7 @@ impl MailboxDO {
                 first_subject_ct_b64: first_subject,
                 first_snippet_ct_b64: first_snippet,
                 first_from_addr: first_from,
+                first_from_name,
                 first_direction: first_dir,
                 participants: serde_json::from_str(&r.participants.unwrap_or_default())
                     .unwrap_or_default(),
@@ -1072,6 +1075,11 @@ struct ThreadRow {
     /// from_addr of the first message in the thread. Used to label the row
     /// "from X" vs "to Y" based on the message direction.
     first_from_addr: Option<String>,
+    /// from_name (parsed display name from the From header) of the first
+    /// message, when one was present. Used to label the row with a human
+    /// name rather than the bare address; the client falls back to
+    /// `first_from_addr` when this is None or empty.
+    first_from_name: Option<String>,
     /// direction of the first message ("in" or "out").
     first_direction: Option<String>,
     participants: Vec<String>,
