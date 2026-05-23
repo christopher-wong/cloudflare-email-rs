@@ -33,9 +33,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: |
-            package-lock.json
-            web/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install Rust toolchain (stable + wasm)
         uses: dtolnay/rust-toolchain@stable
@@ -47,11 +45,10 @@ jobs:
         with:
           workspaces: worker
 
-      - name: Install root npm deps
-        run: npm ci
-
-      - name: Install web npm deps
-        working-directory: web
+      # Root is a workspace root (workspaces: ["web"]) so this single
+      # `npm ci` installs both root and web deps; no separate web install
+      # step needed.
+      - name: Install npm deps (root + web workspace)
         run: npm ci
 
       # Pinned to the same workers-rs commit as worker/Cargo.toml — see
