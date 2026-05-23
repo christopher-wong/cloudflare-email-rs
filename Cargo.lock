@@ -84,7 +84,6 @@ dependencies = [
  "hkdf",
  "hmac",
  "http-body-util",
- "mail-builder",
  "mail-parser",
  "p256",
  "rand_core",
@@ -725,12 +724,6 @@ name = "litemap"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
-
-[[package]]
-name = "mail-builder"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "900998f307338c4013a28ab14d760b784067324b164448c6d98a89e44810473b"
 
 [[package]]
 name = "mail-parser"

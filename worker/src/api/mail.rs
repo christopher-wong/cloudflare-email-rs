@@ -289,7 +289,15 @@ async fn body_bytes(req: &mut HttpRequest) -> ApiResult<Vec<u8>> {
 }
 
 mod outbound {
+    //! Hand-rolled MIME builder.
+    //!
+    //! We don't use `mail-builder` because its `make_boundary` calls
+    //! `SystemTime::now()`, which panics on wasm32-unknown-unknown (the
+    //! Workers target has no clock std impl). Our footprint is small
+    //! enough that a ~100-line builder beats forking the dep.
+
     use super::*;
+    use rand_core::{OsRng, RngCore};
 
     pub(super) struct AttMeta {
         pub r2_key: String,
@@ -305,8 +313,6 @@ mod outbound {
         message_id: &str,
         now_ms: i64,
     ) -> ApiResult<(String, Vec<AttMeta>)> {
-        use mail_builder::MessageBuilder;
-
         // Fetch attachment bytes from R2 so we can attach to outbound MIME.
         let r2 = env
             .bucket("BLOBS")
@@ -335,39 +341,7 @@ mod outbound {
             ));
         }
 
-        // Compose MIME.
-        let mut builder = MessageBuilder::new()
-            .from((req.from_name.as_deref().unwrap_or(""), req.from.as_str()))
-            .to(req
-                .to
-                .iter()
-                .map(|a| ("", a.as_str()))
-                .collect::<Vec<_>>())
-            .subject(req.subject.as_str())
-            .date(now_ms / 1000)
-            .message_id(message_id)
-            .text_body(req.text.as_str());
-        if !req.cc.is_empty() {
-            builder = builder.cc(req.cc.iter().map(|a| ("", a.as_str())).collect::<Vec<_>>());
-        }
-        if !req.bcc.is_empty() {
-            builder = builder.bcc(req.bcc.iter().map(|a| ("", a.as_str())).collect::<Vec<_>>());
-        }
-        if let Some(html) = &req.html {
-            builder = builder.html_body(html.as_str());
-        }
-        if let Some(irt) = &req.in_reply_to {
-            builder = builder.in_reply_to(irt.as_str());
-        }
-        if let Some(refs) = &req.references {
-            builder = builder.references(refs.as_str());
-        }
-        for (name, mime, bytes, _, _) in &atts {
-            builder = builder.attachment(mime.as_str(), name.as_str(), bytes.as_slice());
-        }
-        let raw = builder
-            .write_to_string()
-            .map_err(|e| ApiError::Internal(format!("mime build: {e}")))?;
+        let raw = build_mime(req, message_id, now_ms, &atts);
 
         // Send via binding. We send to To+Cc+Bcc; bcc recipients are not in
         // headers, the binding just delivers to them.
@@ -399,5 +373,176 @@ mod outbound {
             })
             .collect();
         Ok((message_id.to_string(), meta))
+    }
+
+    /// One MIME part: headers (no leading boundary, no trailing CRLF) and a
+    /// body that's already encoded — base64 for leaves, raw multipart text
+    /// for containers.
+    struct Part {
+        headers: String,
+        body: String,
+    }
+
+    fn build_mime(
+        req: &SendReq,
+        message_id: &str,
+        now_ms: i64,
+        atts: &[(String, String, Vec<u8>, i64, Option<String>)],
+    ) -> String {
+        let body_part = match (req.html.as_deref(), atts.is_empty()) {
+            (None, true) => text_part(&req.text),
+            (Some(html), true) => alternative_part(&req.text, html),
+            (None, false) => mixed_part(text_part(&req.text), atts),
+            (Some(html), false) => mixed_part(alternative_part(&req.text, html), atts),
+        };
+
+        let mut out = String::new();
+        out.push_str(&format!("Date: {}\r\n", rfc2822_date(now_ms)));
+        out.push_str(&format!(
+            "From: {}\r\n",
+            fmt_address(req.from_name.as_deref(), &req.from)
+        ));
+        out.push_str(&format!("To: {}\r\n", join_addresses(&req.to)));
+        if !req.cc.is_empty() {
+            out.push_str(&format!("Cc: {}\r\n", join_addresses(&req.cc)));
+        }
+        out.push_str(&format!("Subject: {}\r\n", encode_header_value(&req.subject)));
+        out.push_str(&format!("Message-ID: <{}>\r\n", message_id));
+        if let Some(irt) = &req.in_reply_to {
+            out.push_str(&format!("In-Reply-To: {}\r\n", irt));
+        }
+        if let Some(refs) = &req.references {
+            out.push_str(&format!("References: {}\r\n", refs));
+        }
+        out.push_str("MIME-Version: 1.0\r\n");
+        out.push_str(&body_part.headers);
+        out.push_str("\r\n");
+        out.push_str(&body_part.body);
+        out
+    }
+
+    fn text_part(text: &str) -> Part {
+        Part {
+            headers: "Content-Type: text/plain; charset=utf-8\r\n\
+                      Content-Transfer-Encoding: base64\r\n"
+                .into(),
+            body: base64_wrap(text.as_bytes()),
+        }
+    }
+
+    fn html_part(html: &str) -> Part {
+        Part {
+            headers: "Content-Type: text/html; charset=utf-8\r\n\
+                      Content-Transfer-Encoding: base64\r\n"
+                .into(),
+            body: base64_wrap(html.as_bytes()),
+        }
+    }
+
+    fn attachment_part(mime: &str, filename: &str, bytes: &[u8]) -> Part {
+        let safe = sanitize_filename(filename);
+        Part {
+            headers: format!(
+                "Content-Type: {mime}; name=\"{safe}\"\r\n\
+                 Content-Disposition: attachment; filename=\"{safe}\"\r\n\
+                 Content-Transfer-Encoding: base64\r\n",
+            ),
+            body: base64_wrap(bytes),
+        }
+    }
+
+    fn alternative_part(text: &str, html: &str) -> Part {
+        wrap_multipart(
+            "multipart/alternative",
+            &[text_part(text), html_part(html)],
+        )
+    }
+
+    fn mixed_part(
+        first: Part,
+        atts: &[(String, String, Vec<u8>, i64, Option<String>)],
+    ) -> Part {
+        let mut parts = Vec::with_capacity(1 + atts.len());
+        parts.push(first);
+        for (name, mime, bytes, _, _) in atts {
+            parts.push(attachment_part(mime, name, bytes));
+        }
+        wrap_multipart("multipart/mixed", &parts)
+    }
+
+    fn wrap_multipart(content_type: &str, parts: &[Part]) -> Part {
+        let boundary = make_boundary();
+        let mut body = String::new();
+        for p in parts {
+            body.push_str(&format!("--{}\r\n", boundary));
+            body.push_str(&p.headers);
+            body.push_str("\r\n");
+            body.push_str(&p.body);
+            body.push_str("\r\n");
+        }
+        body.push_str(&format!("--{}--\r\n", boundary));
+        Part {
+            headers: format!(
+                "Content-Type: {content_type}; boundary=\"{boundary}\"\r\n",
+            ),
+            body,
+        }
+    }
+
+    fn make_boundary() -> String {
+        let mut buf = [0u8; 18];
+        OsRng.fill_bytes(&mut buf);
+        format!("=_bmail_{}", crate::b64::url_encode(&buf))
+    }
+
+    /// Wrap base64 at 76 cols with CRLF, per RFC 2045.
+    fn base64_wrap(bytes: &[u8]) -> String {
+        let raw = crate::b64::std_encode(bytes);
+        let mut out = String::with_capacity(raw.len() + raw.len() / 76 * 2);
+        for (i, c) in raw.chars().enumerate() {
+            if i > 0 && i % 76 == 0 {
+                out.push_str("\r\n");
+            }
+            out.push(c);
+        }
+        out
+    }
+
+    fn rfc2822_date(now_ms: i64) -> String {
+        chrono::DateTime::<chrono::Utc>::from_timestamp(now_ms / 1000, 0)
+            .unwrap_or_else(|| {
+                chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap()
+            })
+            .to_rfc2822()
+    }
+
+    fn fmt_address(name: Option<&str>, addr: &str) -> String {
+        match name {
+            Some(n) if !n.is_empty() => {
+                format!("{} <{}>", encode_header_value(n), addr)
+            }
+            _ => addr.to_string(),
+        }
+    }
+
+    fn join_addresses(addrs: &[String]) -> String {
+        addrs.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+    }
+
+    /// RFC 2047 encoded-word for header values that need it (non-ASCII or
+    /// control bytes). ASCII-only values pass through unchanged.
+    fn encode_header_value(s: &str) -> String {
+        if s.bytes().all(|b| b >= 0x20 && b < 0x7f) {
+            return s.to_string();
+        }
+        format!("=?UTF-8?B?{}?=", crate::b64::std_encode(s.as_bytes()))
+    }
+
+    /// Filenames go inside quoted MIME parameters. Strip the few bytes that
+    /// would break the quote or the header (CR, LF, quote, backslash).
+    fn sanitize_filename(name: &str) -> String {
+        name.chars()
+            .filter(|c| !matches!(c, '\r' | '\n' | '"' | '\\'))
+            .collect()
     }
 }

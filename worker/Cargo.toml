@@ -43,7 +43,8 @@ ciborium = "0.2"
 
 # MIME
 mail-parser = { version = "0.9", default-features = false }
-mail-builder = { version = "0.4", default-features = false }
+# Outbound MIME is hand-rolled in worker::api::mail::outbound — mail-builder's
+# `make_boundary` calls `SystemTime::now()`, which panics on wasm32.
 
 # Encoding
 base64 = "0.22"
