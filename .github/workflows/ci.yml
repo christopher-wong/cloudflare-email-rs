@@ -81,7 +81,12 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Pin to wrangler 4. The action's default (3.90.0) fails on this
+          # project because v3 checks the `main` entry point *before*
+          # running the build.command in wrangler.jsonc — the wasm shim
+          # doesn't exist yet at that point. v4 runs build first.
+          wranglerVersion: '4.94.0'
           # Use the project's own build pipeline (web + worker-build) via
-          # wrangler.jsonc's `build.command`. wrangler-action shells out from
-          # the repo root, which is what that command expects.
+          # wrangler.jsonc's `build.command`. wrangler-action shells out
+          # from the repo root, which is what that command expects.
           command: deploy
