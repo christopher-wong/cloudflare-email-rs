@@ -99,8 +99,15 @@ export default function Compose() {
     const el = bodyRef.current;
     if (!el) return;
     el.focus();
+    // formatBlock specifically wants the value wrapped in angle brackets
+    // across browser engines (`<blockquote>`, not `blockquote`). Other
+    // commands take their value as-is (createLink → URL string).
+    const arg =
+      name === 'formatBlock' && value
+        ? `<${value.replace(/[<>]/g, '')}>`
+        : value;
     try {
-      document.execCommand(name, false, value);
+      document.execCommand(name, false, arg);
     } catch { /* ignore — some browsers throw for unsupported commands */ }
     setBody(el.innerHTML);
   };

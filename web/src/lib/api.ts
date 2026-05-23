@@ -24,11 +24,25 @@ async function request<T>(
   if (!res.ok) {
     let msg = res.statusText;
     if (ct.includes('application/json')) {
-      try { msg = (await res.json()).error || msg; } catch {}
+      try { msg = (await res.json()).error || msg; } catch { /* fall through */ }
     } else {
-      try { msg = await res.text(); } catch {}
+      // Non-JSON error body — usually a Cloudflare or worker-runtime
+      // HTML page on uncaught 5xx. Don't dump the whole doc into the
+      // UI; keep the first line / first 200 chars so the user (and
+      // log) sees something actionable, and log the rest to console
+      // for debugging.
+      try {
+        const full = await res.text();
+        const trimmed = full.trim();
+        const oneLine = trimmed.replace(/\s+/g, ' ');
+        msg = oneLine.length > 200 ? oneLine.slice(0, 200) + '…' : oneLine;
+        if (full.length > msg.length) {
+          // eslint-disable-next-line no-console
+          console.error(`api error ${res.status} ${method} ${path}\n${full}`);
+        }
+      } catch { /* ignore */ }
     }
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, `${res.status}: ${msg || res.statusText}`);
   }
   if (res.status === 204) return undefined as T;
   if (ct.includes('application/json')) return (await res.json()) as T;
