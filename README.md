@@ -125,6 +125,47 @@ Plus an authenticator that supports PRF — modern platform authenticators
 (Touch ID, Windows Hello, Android biometrics) and recent FIDO2 keys
 (YubiKey 5+) all work.
 
+## Backup and restore
+
+Durable Objects don't have built-in snapshots (unlike D1's Time Travel),
+so this app ships its own backup mechanism: every DO can dump its
+SQLite tables as JSON, and a worker endpoint packages those dumps into
+a single bundle stored in the R2 bucket.
+
+**Automatic.** A cron trigger (`triggers.crons` in `wrangler.jsonc`)
+fires `#[event(scheduled)]` once a day at 03:17 UTC and runs the same
+backup logic. Output lands in the R2 bucket at
+`backups/<iso8601>.json`.
+
+**Manual.** Admin-only HTTP endpoints:
+
+```bash
+# create a snapshot now; returns {"key": "backups/...", "size_bytes": N}
+curl -X POST https://mail.middleseat.vc/api/admin/backup \
+  -b "cfemail.session=<your-admin-session-cookie>"
+
+# list available snapshots, newest first
+curl https://mail.middleseat.vc/api/admin/backups \
+  -b "cfemail.session=<your-admin-session-cookie>"
+
+# restore — overwrites in-place via INSERT OR REPLACE
+curl -X POST https://mail.middleseat.vc/api/admin/restore \
+  -H 'content-type: application/json' \
+  -b "cfemail.session=<your-admin-session-cookie>" \
+  -d '{"key": "backups/2026-05-23T03-17-00Z.json"}'
+```
+
+**Retention.** Old snapshots aren't auto-deleted by the worker. Set
+an R2 lifecycle rule on `cfemail-blobs` (or whatever your bucket is
+named) with prefix `backups/` and an "expire after N days" rule —
+14 days is a reasonable default.
+
+**What's *not* in the bundle:** R2 blobs themselves (attachments, raw
+.eml ciphertext). They're stored under separate prefixes
+(`attach/`, `raw/`) and survive worker deletion because R2 is a
+separate Cloudflare resource. Only DO metadata is at risk and only
+DO metadata is in the bundle.
+
 ## First-time setup
 
 ### 1. Toolchain

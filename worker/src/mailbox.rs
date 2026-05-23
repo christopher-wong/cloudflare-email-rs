@@ -53,6 +53,8 @@ impl DurableObject for MailboxDO {
             (Method::Delete, "/attachments") => self.delete_attachment(req).await,
             (Method::Get, "/realtime") => self.realtime_upgrade(req).await,
             (Method::Post, "/notify") => self.notify(req).await,
+            (Method::Get, "/export") => self.export(req).await,
+            (Method::Post, "/import") => self.import(req).await,
             _ => Response::error("not found", 404),
         }
     }
@@ -978,6 +980,53 @@ impl MailboxDO {
             .ok_or_else(|| Error::RustError("id required".into()))?;
         self.sql()
             .exec("DELETE FROM attachments WHERE id = ?", Some(vec![id.into()]))?;
+        Response::ok("{}")
+    }
+
+    // ---- backup / restore -------------------------------------------------
+
+    async fn export(&self, _req: Request) -> Result<Response> {
+        use crate::backup::{dump_blob_table, dump_table};
+        let sql = self.sql();
+        let dump = serde_json::json!({
+            "threads":        dump_table(&sql, "SELECT * FROM threads")?,
+            "messages":       dump_blob_table(
+                &sql,
+                "SELECT id, thread_id, message_id, in_reply_to, refs, from_addr, from_name, to_addrs, cc_addrs, bcc_addrs, sent_at, received_at, direction, read, starred, snippet_ct, subject_ct, body_ct, raw_r2_key, size_bytes FROM messages",
+                &["snippet_ct", "subject_ct", "body_ct"])?,
+            "drafts":         dump_blob_table(
+                &sql,
+                "SELECT id, in_reply_to_message_id, to_addrs, cc_addrs, bcc_addrs, subject_ct, body_ct, attachments, updated_at FROM drafts",
+                &["subject_ct", "body_ct"])?,
+            "labels":         dump_table(&sql, "SELECT * FROM labels")?,
+            "message_labels": dump_table(&sql, "SELECT * FROM message_labels")?,
+            "attachments":    dump_blob_table(
+                &sql,
+                "SELECT id, message_id, draft_id, r2_key, filename_ct, mime, size_bytes, created_at FROM attachments",
+                &["filename_ct"])?,
+        });
+        Response::from_json(&dump)
+    }
+
+    async fn import(&self, mut req: Request) -> Result<Response> {
+        use crate::backup::load_table;
+        let body: serde_json::Value = req.json().await?;
+        let sql = self.sql();
+        load_table(&sql, &body, "threads",
+            &["id", "subject_hint", "participants", "last_message_at", "message_count", "unread_count", "has_starred", "archived"], &[])?;
+        load_table(&sql, &body, "labels",
+            &["id", "name", "created_at"], &[])?;
+        load_table(&sql, &body, "messages",
+            &["id", "thread_id", "message_id", "in_reply_to", "refs", "from_addr", "from_name", "to_addrs", "cc_addrs", "bcc_addrs", "sent_at", "received_at", "direction", "read", "starred", "snippet_ct", "subject_ct", "body_ct", "raw_r2_key", "size_bytes"],
+            &["snippet_ct", "subject_ct", "body_ct"])?;
+        load_table(&sql, &body, "drafts",
+            &["id", "in_reply_to_message_id", "to_addrs", "cc_addrs", "bcc_addrs", "subject_ct", "body_ct", "attachments", "updated_at"],
+            &["subject_ct", "body_ct"])?;
+        load_table(&sql, &body, "message_labels",
+            &["message_id", "label_id"], &[])?;
+        load_table(&sql, &body, "attachments",
+            &["id", "message_id", "draft_id", "r2_key", "filename_ct", "mime", "size_bytes", "created_at"],
+            &["filename_ct"])?;
         Response::ok("{}")
     }
 }

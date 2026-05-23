@@ -1,6 +1,7 @@
 use worker::*;
 
 mod b64;
+mod backup;
 mod config;
 mod crypto;
 mod error;
@@ -30,4 +31,14 @@ async fn fetch(req: HttpRequest, env: Env, ctx: Context) -> Result<Response> {
 #[event(email)]
 async fn email(message: ForwardableEmailMessage, env: Env, ctx: Context) -> Result<()> {
     email_in::handle(message, env, ctx).await
+}
+
+/// Cron handler. Fires on the cadence declared in wrangler.jsonc's
+/// `triggers.crons`. Today's sole job: snapshot every DO into R2.
+#[event(scheduled)]
+async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> Result<()> {
+    if let Err(e) = api::admin::run_backup(&env).await {
+        console_error!("scheduled backup failed: {e}");
+    }
+    Ok(())
 }

@@ -55,6 +55,8 @@ impl DurableObject for RegistryDO {
             (Method::Post, "/users/add-passkey") => self.add_passkey(req).await,
             (Method::Get, "/credentials/by-user") => self.credentials_by_user(req).await,
             (Method::Delete, "/credentials") => self.delete_credential(req).await,
+            (Method::Get, "/export") => self.export(req).await,
+            (Method::Post, "/import") => self.import(req).await,
             _ => Response::error("not found", 404),
         }
     }
@@ -964,6 +966,59 @@ impl RegistryDO {
                 now.into(),
             ]),
         )?;
+        Response::ok("{}")
+    }
+
+    // ---- backup / restore -------------------------------------------------
+    //
+    // Export every row in every table as JSON. The worker side gzips and
+    // writes the result to R2. We use serde_json::Value rather than the
+    // typed Row structs above so a schema migration doesn't silently lose
+    // a column on backup — the dump is a faithful copy of whatever's in
+    // the SQLite tables today.
+
+    async fn export(&self, _req: Request) -> Result<Response> {
+        use crate::backup::{dump_blob_table, dump_table};
+        let sql = self.sql();
+        let dump = serde_json::json!({
+            "users":       dump_table(&sql, "SELECT * FROM users")?,
+            "credentials": dump_blob_table(&sql, "SELECT id, user_id, cose_pubkey, sign_count, aaguid, transports, created_at, label FROM credentials", &["id", "cose_pubkey", "aaguid"])?,
+            "addresses":   dump_table(&sql, "SELECT * FROM addresses")?,
+            "invites":     dump_table(&sql, "SELECT * FROM invites")?,
+            "sessions":    dump_table(&sql, "SELECT * FROM sessions")?,
+            "key_wraps":   dump_blob_table(&sql, "SELECT id, user_id, kind, credential_id, wrapped_blob, wrap_salt, kdf_params, label, created_at FROM key_wraps", &["credential_id", "wrapped_blob", "wrap_salt"])?,
+            "challenges":  dump_blob_table(&sql, "SELECT id, value, purpose, user_id, created_at, expires_at FROM challenges", &["value"])?,
+        });
+        Response::from_json(&dump)
+    }
+
+    /// Reinsert rows from an export bundle. Uses INSERT OR REPLACE so a
+    /// partial restore is idempotent (re-running the same backup is a no-op).
+    /// Tables are populated in dependency order; foreign-key-style references
+    /// (e.g. message_labels → labels, etc.) live in the MailboxDO, so the
+    /// Registry import has no cross-row ordering concerns within itself.
+    async fn import(&self, mut req: Request) -> Result<Response> {
+        use crate::backup::load_table;
+        let body: serde_json::Value = req.json().await?;
+        let sql = self.sql();
+        load_table(&sql, &body, "users",
+            &["id", "handle", "display_name", "is_admin", "pub_key", "created_at"],
+            &["pub_key"])?;
+        load_table(&sql, &body, "credentials",
+            &["id", "user_id", "cose_pubkey", "sign_count", "aaguid", "transports", "created_at", "label"],
+            &["id", "cose_pubkey", "aaguid"])?;
+        load_table(&sql, &body, "addresses",
+            &["address", "user_id", "created_at"], &[])?;
+        load_table(&sql, &body, "invites",
+            &["token", "handle", "addresses", "is_admin", "created_by", "created_at", "expires_at", "redeemed_user_id"], &[])?;
+        load_table(&sql, &body, "sessions",
+            &["id", "user_id", "created_at", "expires_at"], &[])?;
+        load_table(&sql, &body, "key_wraps",
+            &["id", "user_id", "kind", "credential_id", "wrapped_blob", "wrap_salt", "kdf_params", "label", "created_at"],
+            &["credential_id", "wrapped_blob", "wrap_salt"])?;
+        load_table(&sql, &body, "challenges",
+            &["id", "value", "purpose", "user_id", "created_at", "expires_at"],
+            &["value"])?;
         Response::ok("{}")
     }
 }

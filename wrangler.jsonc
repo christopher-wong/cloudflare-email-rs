@@ -28,7 +28,7 @@
 		// the expected origin in passkey ceremonies. May differ from the email
 		// domain (e.g. mail.middleseat.vc serving christopher@middleseat.vc).
 		"APP_HOST": "mail.middleseat.vc",
-		"APP_NAME": "bmail",
+		"APP_NAME": "cfmail",
 		"SESSION_TTL_DAYS": "30"
 	},
 	"routes": [
@@ -83,5 +83,13 @@
 		"traces": {
 			"enabled": true
 		}
+	},
+	// Cron-triggered snapshot of every DO to R2 under backups/<iso>.json.
+	// 03:17 UTC daily — quiet hour, off-peak. Match this with the
+	// retention policy on the cfemail-blobs bucket (recommended: keep
+	// last 14 days, delete older). Manual triggers via
+	// POST /api/admin/backup do the same dump on demand.
+	"triggers": {
+		"crons": ["17 3 * * *"]
 	}
 }

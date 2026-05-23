@@ -84,6 +84,9 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
         ("POST", "/api/admin/addresses") => api::admin::add_address(req, &env, &cfg).await,
         ("DELETE", p) if p.starts_with("/api/admin/addresses/") => api::admin::remove_address(req, &env, &cfg).await,
         ("GET", "/api/admin/status") => api::admin::status(req, &env, &cfg).await,
+        ("POST", "/api/admin/backup") => api::admin::backup(req, &env, &cfg).await,
+        ("GET", "/api/admin/backups") => api::admin::list_backups(req, &env, &cfg).await,
+        ("POST", "/api/admin/restore") => api::admin::restore(req, &env, &cfg).await,
 
         ("GET", "/api/config") => api::misc::public_config(&cfg).await,
 
