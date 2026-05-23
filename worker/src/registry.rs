@@ -980,14 +980,31 @@ impl RegistryDO {
     async fn export(&self, _req: Request) -> Result<Response> {
         use crate::backup::{dump_blob_table, dump_table};
         let sql = self.sql();
+        // Each step is a separate let-binding with a context-prefixed
+        // error map so the next backup failure tells us which table
+        // exploded instead of bubbling up an opaque serde message.
+        macro_rules! step {
+            ($name:literal, $e:expr) => {
+                $e.map_err(|err| {
+                    Error::RustError(format!("registry export[{}]: {err}", $name))
+                })?
+            };
+        }
+        let users        = step!("users",       dump_blob_table(&sql, "SELECT id, handle, display_name, is_admin, pub_key, created_at FROM users", &["pub_key"]));
+        let credentials  = step!("credentials", dump_blob_table(&sql, "SELECT id, user_id, cose_pubkey, sign_count, aaguid, transports, created_at, label FROM credentials", &["id", "cose_pubkey", "aaguid"]));
+        let addresses    = step!("addresses",   dump_table(&sql, "SELECT * FROM addresses"));
+        let invites      = step!("invites",     dump_table(&sql, "SELECT * FROM invites"));
+        let sessions     = step!("sessions",    dump_table(&sql, "SELECT * FROM sessions"));
+        let key_wraps    = step!("key_wraps",   dump_blob_table(&sql, "SELECT id, user_id, kind, credential_id, wrapped_blob, wrap_salt, kdf_params, label, created_at FROM key_wraps", &["credential_id", "wrapped_blob", "wrap_salt"]));
+        let challenges   = step!("challenges",  dump_blob_table(&sql, "SELECT id, value, purpose, user_id, created_at, expires_at FROM challenges", &["value"]));
         let dump = serde_json::json!({
-            "users":       dump_blob_table(&sql, "SELECT id, handle, display_name, is_admin, pub_key, created_at FROM users", &["pub_key"])?,
-            "credentials": dump_blob_table(&sql, "SELECT id, user_id, cose_pubkey, sign_count, aaguid, transports, created_at, label FROM credentials", &["id", "cose_pubkey", "aaguid"])?,
-            "addresses":   dump_table(&sql, "SELECT * FROM addresses")?,
-            "invites":     dump_table(&sql, "SELECT * FROM invites")?,
-            "sessions":    dump_table(&sql, "SELECT * FROM sessions")?,
-            "key_wraps":   dump_blob_table(&sql, "SELECT id, user_id, kind, credential_id, wrapped_blob, wrap_salt, kdf_params, label, created_at FROM key_wraps", &["credential_id", "wrapped_blob", "wrap_salt"])?,
-            "challenges":  dump_blob_table(&sql, "SELECT id, value, purpose, user_id, created_at, expires_at FROM challenges", &["value"])?,
+            "users":        users,
+            "credentials":  credentials,
+            "addresses":    addresses,
+            "invites":      invites,
+            "sessions":     sessions,
+            "key_wraps":    key_wraps,
+            "challenges":   challenges,
         });
         Response::from_json(&dump)
     }

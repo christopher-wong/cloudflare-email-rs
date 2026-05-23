@@ -200,8 +200,23 @@ export default function Chrome() {
 
   return (
     <div className="grid h-full" style={{ gridTemplateRows: 'auto 1fr' }}>
-      <div className="sticky top-0 z-30 bg-white">
-      <header className="hair-b flex items-center justify-between gap-2 bg-white px-2 py-2 sm:px-4">
+      {/*
+        Sticky header. Inline safe-area-inset-top padding here (in addition
+        to #root's overall safe-area padding) so the bar reliably clears the
+        iOS status bar / Dynamic Island even if the root padding gets
+        overridden or a sticky context confuses iOS in standalone PWA mode.
+        env() returns 0 outside the notch device class, so this is a no-op
+        on desktop.
+      */}
+      <div
+        className="sticky top-0 z-30 bg-white"
+        style={{
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingLeft: 'env(safe-area-inset-left)',
+          paddingRight: 'env(safe-area-inset-right)',
+        }}
+      >
+      <header className="hair-b flex items-center justify-between gap-2 overflow-hidden bg-white px-2 py-2 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <button
             type="button"

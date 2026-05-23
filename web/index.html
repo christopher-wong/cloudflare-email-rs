@@ -2,7 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- maximum-scale=1 stops iOS Safari from auto-zooming when the user
+         focuses an input whose computed font-size is < 16px, which the
+         compose form's small monospace fields would otherwise trigger.
+         This also blocks pinch-zoom — acceptable for an app-shell PWA. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#000000" />
 
     <!-- PWA -->

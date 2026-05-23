@@ -991,22 +991,26 @@ impl MailboxDO {
     async fn export(&self, _req: Request) -> Result<Response> {
         use crate::backup::{dump_blob_table, dump_table};
         let sql = self.sql();
+        macro_rules! step {
+            ($name:literal, $e:expr) => {
+                $e.map_err(|err| {
+                    Error::RustError(format!("mailbox export[{}]: {err}", $name))
+                })?
+            };
+        }
+        let threads        = step!("threads",        dump_table(&sql, "SELECT * FROM threads"));
+        let messages       = step!("messages",       dump_blob_table(&sql, "SELECT id, thread_id, message_id, in_reply_to, refs, from_addr, from_name, to_addrs, cc_addrs, bcc_addrs, sent_at, received_at, direction, read, starred, snippet_ct, subject_ct, body_ct, raw_r2_key, size_bytes FROM messages", &["snippet_ct", "subject_ct", "body_ct"]));
+        let drafts         = step!("drafts",         dump_blob_table(&sql, "SELECT id, in_reply_to_message_id, to_addrs, cc_addrs, bcc_addrs, subject_ct, body_ct, attachments, updated_at FROM drafts", &["subject_ct", "body_ct"]));
+        let labels         = step!("labels",         dump_table(&sql, "SELECT * FROM labels"));
+        let message_labels = step!("message_labels", dump_table(&sql, "SELECT * FROM message_labels"));
+        let attachments    = step!("attachments",    dump_blob_table(&sql, "SELECT id, message_id, draft_id, r2_key, filename_ct, mime, size_bytes, created_at FROM attachments", &["filename_ct"]));
         let dump = serde_json::json!({
-            "threads":        dump_table(&sql, "SELECT * FROM threads")?,
-            "messages":       dump_blob_table(
-                &sql,
-                "SELECT id, thread_id, message_id, in_reply_to, refs, from_addr, from_name, to_addrs, cc_addrs, bcc_addrs, sent_at, received_at, direction, read, starred, snippet_ct, subject_ct, body_ct, raw_r2_key, size_bytes FROM messages",
-                &["snippet_ct", "subject_ct", "body_ct"])?,
-            "drafts":         dump_blob_table(
-                &sql,
-                "SELECT id, in_reply_to_message_id, to_addrs, cc_addrs, bcc_addrs, subject_ct, body_ct, attachments, updated_at FROM drafts",
-                &["subject_ct", "body_ct"])?,
-            "labels":         dump_table(&sql, "SELECT * FROM labels")?,
-            "message_labels": dump_table(&sql, "SELECT * FROM message_labels")?,
-            "attachments":    dump_blob_table(
-                &sql,
-                "SELECT id, message_id, draft_id, r2_key, filename_ct, mime, size_bytes, created_at FROM attachments",
-                &["filename_ct"])?,
+            "threads":        threads,
+            "messages":       messages,
+            "drafts":         drafts,
+            "labels":         labels,
+            "message_labels": message_labels,
+            "attachments":    attachments,
         });
         Response::from_json(&dump)
     }

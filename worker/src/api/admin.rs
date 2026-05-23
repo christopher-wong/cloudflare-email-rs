@@ -99,23 +99,35 @@ const BACKUP_PREFIX: &str = "backups/";
 /// Build a bundle from every DO and write it to R2. Called by both the
 /// admin-triggered POST /api/admin/backup and the cron handler. Returns
 /// (key, bytes_written).
+///
+/// Each step wraps its error with context — backups have failed twice
+/// with the same opaque "invalid type: byte array, expected any valid
+/// JSON value" message, and we want the next failure to tell us
+/// *which* DO call died so we can grep the right schema for the
+/// offending BLOB column instead of auditing all of them again.
 pub async fn run_backup(env: &Env) -> ApiResult<(String, usize)> {
     let registry = registry_stub(env)?;
-    // Registry first — its dump tells us which users exist for the
-    // per-mailbox dumps that follow.
-    let registry_dump: serde_json::Value =
-        stub_json(&registry, Method::Get, "/export", None).await?;
+
+    worker::console_log!("backup: starting; dumping registry");
+    let registry_dump: serde_json::Value = stub_json(&registry, Method::Get, "/export", None)
+        .await
+        .map_err(|e| ApiError::Internal(format!("registry /export failed: {e}")))?;
+    worker::console_log!("backup: registry dump ok");
 
     #[derive(serde::Deserialize)]
     struct UserId { id: String }
-    let users: Vec<UserId> =
-        stub_json(&registry, Method::Get, "/users", None).await?;
+    let users: Vec<UserId> = stub_json(&registry, Method::Get, "/users", None)
+        .await
+        .map_err(|e| ApiError::Internal(format!("registry /users failed: {e}")))?;
+    worker::console_log!("backup: {} users to dump", users.len());
 
     let mut mailboxes = serde_json::Map::with_capacity(users.len());
     for u in &users {
         let stub = super::mailbox_stub(env, &u.id)?;
-        let dump: serde_json::Value =
-            stub_json(&stub, Method::Get, "/export", None).await?;
+        let dump: serde_json::Value = stub_json(&stub, Method::Get, "/export", None)
+            .await
+            .map_err(|e| ApiError::Internal(format!("mailbox /export {} failed: {e}", u.id)))?;
+        worker::console_log!("backup: mailbox {} dump ok", u.id);
         mailboxes.insert(u.id.clone(), dump);
     }
 
