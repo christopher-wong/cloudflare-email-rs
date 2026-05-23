@@ -1,0 +1,90 @@
+name: ci
+
+# Build + test the worker (Rust→wasm) and the web frontend, then deploy to
+# Cloudflare on a green build to master. Pull requests run the same checks
+# but skip the deploy step.
+#
+# Required repository secrets:
+#   CLOUDFLARE_API_TOKEN  — token with Workers Edit, Account Read,
+#                           D1/KV/R2/DO/Email Routing Edit for this account
+#   CLOUDFLARE_ACCOUNT_ID — the account that owns the cfemail worker
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# Two concurrency lanes — never cancel an in-flight deploy (it might be
+# mid-write to a Durable Object), but freely cancel superseded PR checks.
+concurrency:
+  group: ${{ github.event_name == 'push' && 'deploy-master' || format('pr-{0}', github.head_ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+
+      - name: Install Rust toolchain (stable + wasm)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry + worker target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: worker
+
+      - name: Install root npm deps
+        run: npm ci
+
+      - name: Install web npm deps
+        working-directory: web
+        run: npm ci
+
+      # Pinned to the same workers-rs commit as worker/Cargo.toml — see
+      # scripts/build-worker.sh for the reason. The `cargo install` is a
+      # no-op when rust-cache restored the bin from a previous run.
+      - name: Install worker-build (pinned workers-rs rev)
+        run: |
+          if ! command -v worker-build > /dev/null; then
+            cargo install \
+              --git https://github.com/cloudflare/workers-rs \
+              --rev 3d0903aac3332a69ed5393d5a6cceb9ddb2f17b4 \
+              worker-build
+          fi
+
+      - name: tsc — web typecheck
+        run: npm --prefix web run typecheck
+
+      - name: cargo check — worker on wasm target
+        run: cargo check --target wasm32-unknown-unknown --manifest-path worker/Cargo.toml
+
+      - name: cargo test — worker unit tests (native)
+        run: cargo test --lib --manifest-path worker/Cargo.toml
+
+      - name: vitest — web unit tests
+        run: npm --prefix web run test
+
+      - name: wrangler deploy
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Use the project's own build pipeline (web + worker-build) via
+          # wrangler.jsonc's `build.command`. wrangler-action shells out from
+          # the repo root, which is what that command expects.
+          command: deploy

@@ -402,6 +402,28 @@ preview deploy when you want to validate the inbound path.
 - **Inbound testing requires deploy.** No way around it. Email Routing
   rules can't target a localhost worker.
 
+### Continuous deployment
+
+`.github/workflows/ci.yml` runs on every push and pull request: `tsc`,
+`cargo check --target wasm32-unknown-unknown`, `cargo test`, and
+`vitest`. On a green build *on master* (not PR branches), it then runs
+`wrangler deploy`, which performs the full wasm + Vite build via the
+project's `wrangler.jsonc` `build.command`.
+
+Required repository secrets (Settings → Secrets and variables →
+Actions):
+
+- `CLOUDFLARE_API_TOKEN` — a token with these permissions on the
+  account that owns the worker: `Workers Scripts:Edit`,
+  `Account Settings:Read`, `D1:Edit` (unused but the template asks),
+  `Workers R2 Storage:Edit`, `Workers KV Storage:Edit`,
+  `Email Routing Addresses:Edit`.
+- `CLOUDFLARE_ACCOUNT_ID` — visible in the Cloudflare dashboard
+  sidebar.
+
+The deploy job is single-concurrent on master so two pushes never race
+to a write a Durable Object. PR check jobs cancel on superseding push.
+
 ## Project layout
 
 ```
