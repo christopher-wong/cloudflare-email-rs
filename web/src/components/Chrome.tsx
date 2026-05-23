@@ -262,7 +262,7 @@ export default function Chrome() {
         <nav
           aria-label="navigation"
           className={
-            'absolute inset-y-0 left-0 z-30 w-48 overflow-y-auto bg-paper py-2 hair-r ' +
+            'absolute inset-y-0 left-0 z-30 w-48 overflow-y-auto bg-paper pb-2 hair-r ' +
             'transition-transform duration-150 ease-out ' +
             (mobileOpen ? 'translate-x-0' : '-translate-x-full') +
             ' md:relative md:translate-x-0 md:bg-transparent ' +
