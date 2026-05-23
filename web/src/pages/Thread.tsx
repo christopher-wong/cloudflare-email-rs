@@ -100,6 +100,13 @@ export default function Thread() {
     }
   };
 
+  // A live ref to the latest msgs list. We can't put `msgs` in the
+  // useEffect dep array — load() sets msgs, msgs re-fires the effect,
+  // load() runs again, ad infinitum. So the realtime handler reads
+  // through this ref instead and the effect deps only include `id`.
+  const msgsRef = useRef<api.MessageRow[] | null>(null);
+  useEffect(() => { msgsRef.current = msgs; }, [msgs]);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -141,10 +148,6 @@ export default function Thread() {
     };
     void load();
     const unsub = realtime.subscribe((ev) => {
-      // React to changes that affect THIS thread. We re-fetch on
-      // new/delete events for the thread, and on read/star events for
-      // any message we're currently rendering. We don't try to be
-      // surgical — a re-fetch is cheap and avoids divergence bugs.
       switch (ev.type) {
         case 'message.new': {
           const tid = (ev as { thread_id?: string }).thread_id;
@@ -160,12 +163,12 @@ export default function Thread() {
         case 'message.read':
         case 'message.star':
         case 'message.label':
-          if (msgs?.some((m) => m.id === ev.msg_id)) void load();
+          if (msgsRef.current?.some((m) => m.id === ev.msg_id)) void load();
           break;
       }
     });
     return () => { cancelled = true; unsub(); };
-  }, [id, msgs]);
+  }, [id, nav]);
 
   const priv = sessionPriv();
   const decoded = useMemo<Decoded[] | null>(() => {
