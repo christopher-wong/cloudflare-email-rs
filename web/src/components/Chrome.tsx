@@ -20,8 +20,8 @@
  * driving an ephemeral open/closed state that resets on every navigation.
  */
 
-import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { Link, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { useEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { useApp } from '@/lib/store';
 import { isEditableTarget, isModK, hasMod } from '@/lib/shortcuts';
 import { sessionPriv, unlock } from '@/lib/webauthn';
@@ -200,12 +200,7 @@ export default function Chrome() {
 
   return (
     <div className="grid h-full" style={{ gridTemplateRows: 'auto 1fr' }}>
-      {/* UnlockBanner renders null when unlocked, so it costs zero layout
-          when it doesn't appear. Wrapping it with the header keeps the
-          outer grid at 2 rows (auto + 1fr) — adding a separate row makes
-          the 1fr content track lose its remaining-space sizing. */}
       <div className="sticky top-0 z-30 bg-white">
-        <UnlockBanner />
       <header className="hair-b flex items-center justify-between gap-2 bg-white px-2 py-2 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <button
@@ -291,7 +286,9 @@ export default function Chrome() {
         </nav>
 
         <main className="overflow-y-auto">
-          <Outlet />
+          <UnlockGate>
+            <Outlet />
+          </UnlockGate>
         </main>
       </div>
 
@@ -326,55 +323,73 @@ function Hamburger({ open }: { open: boolean }) {
 }
 
 /**
- * Sits above the main header. Visible only when the user is signed in
- * (state.me populated) but sessionPriv is null — i.e. cookies survived
- * but the in-memory priv was lost (cold reload, new tab). One click +
- * Touch ID unlocks the vault without a full sign-in.
+ * Replaces the routed content when the user is signed in but the
+ * in-memory X25519 priv is missing. Showing the bare inbox view with
+ * "[encrypted]" placeholders everywhere isn't useful — making unlock
+ * the main action prevents the user from staring at unreadable rows
+ * and wondering why nothing decrypts.
+ *
+ * Sidebar / chrome stay rendered around this so navigation, logout,
+ * and the command palette still work; the locked state only affects
+ * the routed content area.
  */
-function UnlockBanner() {
+function UnlockGate({ children }: { children: ReactNode }) {
   const { state } = useApp();
-  // Force re-evaluation on focus + storage events so the banner clears
-  // as soon as some other tab unlocks (event-driven) or a navigation
-  // re-renders Chrome.
+  // Re-read sessionPriv on every render. We force a re-render after
+  // a successful unlock by bumping `tick`, and also on window focus
+  // so a successful unlock in another tab propagates.
   const [tick, setTick] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     const onFocus = () => setTick((t) => t + 1);
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, []);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  // Re-read each render so we always reflect the current state.
   void tick;
-  if (!state.me || sessionPriv()) return null;
+
+  // Pass through when there's no auth at all (Login/Bootstrap/Landing
+  // handle their own UI) or when the priv is in memory.
+  if (!state.me) return <>{children}</>;
+  if (sessionPriv()) return <>{children}</>;
+
+  const doUnlock = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await unlock();
+      setTick((t) => t + 1);
+    } catch (e: any) {
+      setErr(e?.message || 'unlock failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="hair-b flex items-center justify-between gap-3 bg-white px-3 py-2 text-sm">
+    <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center gap-6 p-8 text-center">
       <div>
-        <span className="font-bold">vault locked</span>
-        <span className="text-mute ml-2 text-xs">
-          unlock with your passkey to decrypt subjects, snippets, and message bodies.
-        </span>
-        {err && <span className="ml-2 text-xs text-red-600">{err}</span>}
+        <div className="label">BMAIL · LOCKED</div>
+        <h1 className="mt-2 text-3xl font-bold tracking-wider">unlock to read</h1>
       </div>
+      <p className="text-mute text-sm">
+        Your subjects, bodies, and attachments are encrypted with a key
+        held only in your authenticator. Touch ID to decrypt this
+        device's session — no full sign-in needed.
+      </p>
       <button
         type="button"
-        className="btn btn-primary label"
+        className="btn btn-primary label w-full py-3 text-base"
         disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          setErr(null);
-          try {
-            await unlock();
-            setTick((t) => t + 1);
-          } catch (e: any) {
-            setErr(e?.message || 'unlock failed');
-          } finally {
-            setBusy(false);
-          }
-        }}
+        onClick={() => void doUnlock()}
       >
-        {busy ? 'unlocking…' : 'unlock ▸'}
+        {busy ? 'unlocking…' : 'unlock with passkey ▸'}
       </button>
+      {err && <div className="hair-all inv px-3 py-2 text-sm">{err}</div>}
+      <p className="text-mute text-xs">
+        no passkey on this device? <Link to="/login" className="underline">use the full sign-in flow</Link>{' '}
+        or unlock with your recovery phrase.
+      </p>
     </div>
   );
 }

@@ -51,13 +51,32 @@ function Router() {
 
   if (state.loading) return <Loader label="boot" />;
 
+  // Two completely separate route trees gated on auth state. Rendering
+  // one tree at a time eliminates the rank-tie between "/" → Landing and
+  // the index route nested inside the Authed layout. The Authed wrapper
+  // is no longer needed as a redirect gate; we just don't mount the
+  // private routes when there's no `state.me`.
+  if (!state.me) {
+    return (
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/bootstrap" element={<Bootstrap />} />
+        <Route path="/enroll" element={<Enroll />} />
+        {/* Any other path on the public tree bounces to the landing.
+            Replaces the old behavior where deep links would hit Authed
+            and force a /login redirect. */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <Routes>
       <Route path="/bootstrap" element={<Bootstrap />} />
       <Route path="/enroll" element={<Enroll />} />
       <Route path="/login" element={<Login />} />
-      {!state.me && <Route path="/" element={<Landing />} />}
-      <Route element={<Authed />}>
+      <Route element={<AuthedShell />}>
         <Route element={<Chrome />}>
           <Route index element={<Inbox />} />
           <Route path="/thread/:id" element={<Thread />} />
@@ -74,7 +93,14 @@ function Router() {
   );
 }
 
-function Authed() {
+/**
+ * Layout wrapper for authenticated routes. Hosts global side-effects
+ * (realtime → notifications) that should only run while signed in.
+ * The "redirect to /login when unauthenticated" responsibility moved
+ * up to `Router()` — by the time AuthedShell renders, state.me is
+ * guaranteed to be set, so we don't repeat the check here.
+ */
+function AuthedShell() {
   const { state } = useApp();
   const nav = useNavigate();
 
@@ -121,12 +147,7 @@ function Authed() {
     });
   }, [state.me, nav]);
 
-  if (!state.me) return <Navigate to="/login" replace />;
-  // Just render the nested routes; Chrome is the layout.
-  // (React Router treats this <Authed/> as a layout route so children render
-  // via Outlet inside Chrome.)
-  return <RouteOutlet />;
+  return <Outlet />;
 }
 
 import { Outlet } from 'react-router-dom';
-function RouteOutlet() { return <Outlet />; }
