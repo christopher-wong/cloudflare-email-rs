@@ -1,0 +1,2964 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "cfemail HTTP API",
+    "description": "End-to-end encrypted email backed by Cloudflare Workers + Durable Objects. All `/api/*` routes are served by the Rust worker in `worker/src/router.rs`.",
+    "license": {
+      "name": ""
+    },
+    "version": "0.0.0"
+  },
+  "paths": {
+    "/api/bootstrap": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "description": "One-shot tenant bootstrap. Refuses if any users already exist.",
+        "operationId": "bootstrap",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BootstrapReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BootstrapResp"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already bootstrapped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/register/options": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "description": "Start a WebAuthn registration ceremony against an invite token.",
+        "operationId": "register_options",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterOptionsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterOptions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/register/verify": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "description": "Verify the attestation, create the user, and issue a session cookie.",
+        "operationId": "register_verify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterVerifyReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterVerifyResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login/options": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "description": "Allocate a server-side WebAuthn challenge for sign-in.",
+        "operationId": "login_options",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginOptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login/verify": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "description": "Verify the assertion, update sign count, and issue a session cookie.",
+        "operationId": "login_verify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginVerifyReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginVerifyResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/recovery/begin": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "description": "Step 1 of passphrase recovery: returns the recovery wrap and a sealed proof token.",
+        "operationId": "recovery_begin",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryBeginReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryBeginResp"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/recovery/verify": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "description": "Step 2: client returns the decrypted proof token, server issues a session.",
+        "operationId": "recovery_verify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryVerifyReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "description": "Invalidate the current session cookie.",
+        "operationId": "logout",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "description": "Return the authenticated user's profile.",
+        "operationId": "get_me",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "me"
+        ],
+        "description": "Update mutable profile fields (currently just display_name).",
+        "operationId": "patch_me",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchMeReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/addresses": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "description": "List all email addresses owned by the authenticated user.",
+        "operationId": "list_addresses",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/passkeys": {
+      "get": {
+        "tags": [
+          "passkeys"
+        ],
+        "description": "List passkey credentials registered to the current user.",
+        "operationId": "passkeys_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CredentialView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/passkeys/add/options": {
+      "post": {
+        "tags": [
+          "passkeys"
+        ],
+        "description": "Start an add-passkey ceremony. Returns PRF-extension options and excludes existing creds.",
+        "operationId": "passkeys_add_options",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddPasskeyOptions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/passkeys/add/verify": {
+      "post": {
+        "tags": [
+          "passkeys"
+        ],
+        "description": "Verify the new attestation and store the wrap of the user's existing X25519 priv.",
+        "operationId": "passkeys_add_verify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddPasskeyVerifyReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/passkeys/{credential_id_b64}": {
+      "delete": {
+        "tags": [
+          "passkeys"
+        ],
+        "description": "Remove a passkey credential + its wrap. Last passkey on a user is refused.",
+        "operationId": "passkeys_remove",
+        "parameters": [
+          {
+            "name": "credential_id_b64",
+            "in": "path",
+            "description": "base64url-encoded WebAuthn credential id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/threads": {
+      "get": {
+        "tags": [
+          "mail"
+        ],
+        "description": "List threads in the authenticated user's mailbox. Forwards query string to the mailbox DO.",
+        "operationId": "list_threads",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ThreadSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}": {
+      "get": {
+        "tags": [
+          "mail"
+        ],
+        "description": "Return all messages in a thread.",
+        "operationId": "get_thread",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MessageView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages/{message_id}": {
+      "delete": {
+        "tags": [
+          "mail"
+        ],
+        "operationId": "delete_message",
+        "parameters": [
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "mail"
+        ],
+        "description": "Update message flags (starred/read/archived) or move it to another thread.",
+        "operationId": "patch_message",
+        "parameters": [
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchMessageReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages/send": {
+      "post": {
+        "tags": [
+          "mail"
+        ],
+        "description": "Send an outbound message via the EMAIL binding and seal a copy for the sender's mailbox.",
+        "operationId": "send_message",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drafts": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "operationId": "drafts_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DraftView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "description": "Create or upsert a draft. ID is supplied by the client for idempotent autosaves.",
+        "operationId": "drafts_upsert",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftUpsertReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/drafts/{draft_id}": {
+      "delete": {
+        "tags": [
+          "drafts"
+        ],
+        "operationId": "drafts_delete",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/labels": {
+      "get": {
+        "tags": [
+          "labels"
+        ],
+        "operationId": "labels_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LabelView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "labels"
+        ],
+        "operationId": "labels_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLabelReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/labels/{label_id}": {
+      "delete": {
+        "tags": [
+          "labels"
+        ],
+        "operationId": "labels_delete",
+        "parameters": [
+          {
+            "name": "label_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "labels"
+        ],
+        "operationId": "labels_update",
+        "parameters": [
+          {
+            "name": "label_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLabelReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/message-labels": {
+      "post": {
+        "tags": [
+          "labels"
+        ],
+        "description": "Toggle a label on a message.",
+        "operationId": "message_labels_toggle",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToggleMessageLabelReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/attachments": {
+      "post": {
+        "tags": [
+          "attachments"
+        ],
+        "description": "Upload an encrypted attachment blob. Query params: mime, filename_ct_b64, draft_id. Body is raw bytes.",
+        "operationId": "attachments_upload",
+        "parameters": [
+          {
+            "name": "mime",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename_ct_b64",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "draft_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Raw encrypted attachment bytes.",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentUploadResp"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/attachments/{attachment_id}": {
+      "get": {
+        "tags": [
+          "attachments"
+        ],
+        "description": "Stream back the encrypted attachment bytes.",
+        "operationId": "attachments_download",
+        "parameters": [
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw bytes; content-type from R2 metadata.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "attachments"
+        ],
+        "operationId": "attachments_delete",
+        "parameters": [
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/invites": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_list_invites",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InviteView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "description": "Issue a new invite. Admin-only.",
+        "operationId": "admin_create_invite",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateInviteReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateInviteResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_list_users",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/addresses": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "description": "Attach an additional owned address to a user.",
+        "operationId": "admin_add_address",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddAddressReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/addresses/{address}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_remove_address",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/status": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "description": "Unauthenticated bootstrap-status probe used on first load.",
+        "operationId": "admin_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStatusResp"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config": {
+      "get": {
+        "tags": [
+          "misc"
+        ],
+        "description": "Public, unauthenticated app config.",
+        "operationId": "public_config",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicConfig"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AddAddressReq": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "address"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          }
+        }
+      },
+      "AddPasskeyOptions": {
+        "type": "object",
+        "required": [
+          "rp",
+          "user",
+          "challenge",
+          "pub_key_cred_params",
+          "authenticator_selection",
+          "timeout",
+          "attestation",
+          "extensions",
+          "challenge_id",
+          "prf_salt_b64",
+          "exclude_credentials"
+        ],
+        "properties": {
+          "rp": {
+            "$ref": "#/components/schemas/RpInfo"
+          },
+          "user": {
+            "$ref": "#/components/schemas/PubKeyUser"
+          },
+          "challenge": {
+            "type": "string"
+          },
+          "pub_key_cred_params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PubKeyCredParam"
+            }
+          },
+          "authenticator_selection": {
+            "$ref": "#/components/schemas/AuthenticatorSelection"
+          },
+          "timeout": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "attestation": {
+            "type": "string"
+          },
+          "extensions": {
+            "$ref": "#/components/schemas/Extensions"
+          },
+          "challenge_id": {
+            "type": "string"
+          },
+          "prf_salt_b64": {
+            "type": "string"
+          },
+          "exclude_credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExcludeCred"
+            }
+          }
+        }
+      },
+      "AddPasskeyVerifyReq": {
+        "type": "object",
+        "required": [
+          "challenge_id",
+          "attestation",
+          "wrapped_blob_b64",
+          "wrap_salt_b64"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string"
+          },
+          "cred_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attestation": {
+            "$ref": "#/components/schemas/AttestationResp"
+          },
+          "wrapped_blob_b64": {
+            "type": "string"
+          },
+          "wrap_salt_b64": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminStatusResp": {
+        "type": "object",
+        "required": [
+          "needs_bootstrap",
+          "is_authed",
+          "primary_domain",
+          "additional_domains",
+          "app_host",
+          "app_name",
+          "user_count"
+        ],
+        "properties": {
+          "needs_bootstrap": {
+            "type": "boolean"
+          },
+          "is_authed": {
+            "type": "boolean"
+          },
+          "primary_domain": {
+            "type": "string"
+          },
+          "additional_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "app_host": {
+            "type": "string"
+          },
+          "app_name": {
+            "type": "string"
+          },
+          "user_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "AttachmentUploadResp": {
+        "type": "object",
+        "required": [
+          "id",
+          "r2_key",
+          "size_bytes",
+          "mime"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "r2_key": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mime": {
+            "type": "string"
+          }
+        }
+      },
+      "AttestationResp": {
+        "type": "object",
+        "required": [
+          "credential_id_b64",
+          "client_data_json_b64",
+          "attestation_object_b64"
+        ],
+        "properties": {
+          "credential_id_b64": {
+            "type": "string"
+          },
+          "client_data_json_b64": {
+            "type": "string"
+          },
+          "attestation_object_b64": {
+            "type": "string"
+          },
+          "transports": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "AuthenticatorSelection": {
+        "type": "object",
+        "required": [
+          "user_verification",
+          "resident_key",
+          "require_resident_key"
+        ],
+        "properties": {
+          "user_verification": {
+            "type": "string"
+          },
+          "resident_key": {
+            "type": "string"
+          },
+          "require_resident_key": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BootstrapReq": {
+        "type": "object",
+        "required": [
+          "handle",
+          "addresses"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BootstrapResp": {
+        "type": "object",
+        "required": [
+          "invite_token",
+          "enroll_url"
+        ],
+        "properties": {
+          "invite_token": {
+            "type": "string"
+          },
+          "enroll_url": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateInviteReq": {
+        "type": "object",
+        "required": [
+          "addresses"
+        ],
+        "properties": {
+          "handle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "is_admin": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CreateInviteResp": {
+        "type": "object",
+        "required": [
+          "token",
+          "enroll_url",
+          "addresses",
+          "is_admin",
+          "expires_at"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "enroll_url": {
+            "type": "string"
+          },
+          "handle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CreateLabelReq": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CredentialView": {
+        "type": "object",
+        "required": [
+          "id_b64",
+          "cose_pubkey_b64",
+          "sign_count"
+        ],
+        "properties": {
+          "id_b64": {
+            "type": "string"
+          },
+          "cose_pubkey_b64": {
+            "type": "string"
+          },
+          "sign_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "DraftUpsertReq": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_addrs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "cc_addrs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "bcc_addrs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "in_reply_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "references": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "DraftView": {
+        "type": "object",
+        "required": [
+          "id",
+          "updated_at",
+          "to_addrs",
+          "cc_addrs",
+          "bcc_addrs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subject_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_addrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cc_addrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bcc_addrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Human-readable error message. Status code carries the category\n(400/401/403/404/409/500)."
+          }
+        }
+      },
+      "ExcludeCred": {
+        "type": "object",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "Extensions": {
+        "type": "object",
+        "required": [
+          "prf"
+        ],
+        "properties": {
+          "prf": {
+            "$ref": "#/components/schemas/PrfInput"
+          }
+        }
+      },
+      "InviteView": {
+        "type": "object",
+        "required": [
+          "token",
+          "addresses",
+          "is_admin",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "handle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "redeemed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "KeyWrapView": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "wrapped_blob_b64",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "One of `\"passkey\"` or `\"recovery\"`."
+          },
+          "credential_id_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wrapped_blob_b64": {
+            "type": "string"
+          },
+          "wrap_salt_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kdf_params": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "JSON-encoded KDF params for recovery wraps; null for passkey wraps."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "LabelView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "LoginOptions": {
+        "type": "object",
+        "required": [
+          "rp_id",
+          "challenge",
+          "challenge_id",
+          "timeout",
+          "user_verification",
+          "extensions",
+          "prf_salt_b64"
+        ],
+        "properties": {
+          "rp_id": {
+            "type": "string"
+          },
+          "challenge": {
+            "type": "string"
+          },
+          "challenge_id": {
+            "type": "string"
+          },
+          "timeout": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "user_verification": {
+            "type": "string"
+          },
+          "extensions": {
+            "$ref": "#/components/schemas/Extensions"
+          },
+          "prf_salt_b64": {
+            "type": "string"
+          }
+        }
+      },
+      "LoginVerifyReq": {
+        "type": "object",
+        "required": [
+          "challenge_id",
+          "credential_id_b64",
+          "client_data_json_b64",
+          "authenticator_data_b64",
+          "signature_b64"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string"
+          },
+          "credential_id_b64": {
+            "type": "string"
+          },
+          "client_data_json_b64": {
+            "type": "string"
+          },
+          "authenticator_data_b64": {
+            "type": "string"
+          },
+          "signature_b64": {
+            "type": "string"
+          }
+        }
+      },
+      "LoginVerifyResp": {
+        "type": "object",
+        "required": [
+          "user",
+          "wrap"
+        ],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/UserView"
+          },
+          "wrap": {
+            "$ref": "#/components/schemas/KeyWrapView"
+          }
+        }
+      },
+      "MessageView": {
+        "type": "object",
+        "required": [
+          "id",
+          "thread_id",
+          "message_id",
+          "direction",
+          "from_addr",
+          "to_addrs",
+          "cc_addrs",
+          "sent_at",
+          "size_bytes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "thread_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string"
+          },
+          "from_addr": {
+            "type": "string"
+          },
+          "from_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_addrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cc_addrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sent_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subject_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snippet_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "OkResponse": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PatchMeReq": {
+        "type": "object",
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PatchMessageReq": {
+        "type": "object",
+        "properties": {
+          "starred": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "read": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "thread_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PrfEval": {
+        "type": "object",
+        "required": [
+          "first"
+        ],
+        "properties": {
+          "first": {
+            "type": "string"
+          }
+        }
+      },
+      "PrfInput": {
+        "type": "object",
+        "required": [
+          "eval"
+        ],
+        "properties": {
+          "eval": {
+            "$ref": "#/components/schemas/PrfEval"
+          }
+        }
+      },
+      "PubKeyCredParam": {
+        "type": "object",
+        "required": [
+          "type",
+          "alg"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "alg": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "PubKeyUser": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "display_name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          }
+        }
+      },
+      "PublicConfig": {
+        "type": "object",
+        "required": [
+          "primary_domain",
+          "additional_domains",
+          "app_host",
+          "app_name"
+        ],
+        "properties": {
+          "primary_domain": {
+            "type": "string"
+          },
+          "additional_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "app_host": {
+            "type": "string"
+          },
+          "app_name": {
+            "type": "string"
+          }
+        }
+      },
+      "RecoveryBeginReq": {
+        "type": "object",
+        "required": [
+          "handle"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          }
+        }
+      },
+      "RecoveryBeginResp": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "wrap",
+          "sealed_proof_b64",
+          "challenge_id"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string"
+          },
+          "wrap": {
+            "$ref": "#/components/schemas/KeyWrapView"
+          },
+          "sealed_proof_b64": {
+            "type": "string",
+            "description": "Random token sealed to the user's X25519 pubkey."
+          },
+          "challenge_id": {
+            "type": "string"
+          }
+        }
+      },
+      "RecoveryVerifyReq": {
+        "type": "object",
+        "required": [
+          "challenge_id",
+          "proof_b64"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string"
+          },
+          "proof_b64": {
+            "type": "string"
+          }
+        }
+      },
+      "RegisterOptions": {
+        "type": "object",
+        "required": [
+          "rp",
+          "user",
+          "challenge",
+          "pub_key_cred_params",
+          "authenticator_selection",
+          "timeout",
+          "attestation",
+          "extensions",
+          "challenge_id",
+          "prf_salt_b64",
+          "invite_addresses",
+          "invite_is_admin"
+        ],
+        "properties": {
+          "rp": {
+            "$ref": "#/components/schemas/RpInfo"
+          },
+          "user": {
+            "$ref": "#/components/schemas/PubKeyUser"
+          },
+          "challenge": {
+            "type": "string"
+          },
+          "pub_key_cred_params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PubKeyCredParam"
+            }
+          },
+          "authenticator_selection": {
+            "$ref": "#/components/schemas/AuthenticatorSelection"
+          },
+          "timeout": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "attestation": {
+            "type": "string"
+          },
+          "extensions": {
+            "$ref": "#/components/schemas/Extensions"
+          },
+          "challenge_id": {
+            "type": "string"
+          },
+          "prf_salt_b64": {
+            "type": "string"
+          },
+          "invite_handle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "invite_addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "invite_is_admin": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RegisterOptionsReq": {
+        "type": "object",
+        "required": [
+          "invite_token"
+        ],
+        "properties": {
+          "invite_token": {
+            "type": "string"
+          }
+        }
+      },
+      "RegisterVerifyReq": {
+        "type": "object",
+        "required": [
+          "invite_token",
+          "challenge_id",
+          "attestation",
+          "pub_key_b64",
+          "wraps"
+        ],
+        "properties": {
+          "invite_token": {
+            "type": "string"
+          },
+          "challenge_id": {
+            "type": "string"
+          },
+          "handle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cred_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attestation": {
+            "$ref": "#/components/schemas/AttestationResp"
+          },
+          "pub_key_b64": {
+            "type": "string",
+            "description": "X25519 public key bytes (32B), base64url."
+          },
+          "wraps": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Two wraps required: one passkey, one recovery. Pass-through to the DO."
+          }
+        }
+      },
+      "RegisterVerifyResp": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "is_admin",
+          "addresses"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string"
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RpInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SendReq": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "subject",
+          "text"
+        ],
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "from_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bcc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "html": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "in_reply_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "references": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attachment_r2_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional R2 keys for attachments (already uploaded via /api/attachments)."
+          }
+        }
+      },
+      "SendResp": {
+        "type": "object",
+        "required": [
+          "message_id",
+          "thread_id"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "thread_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ThreadSummary": {
+        "type": "object",
+        "description": "Thread summary returned by `GET /api/threads`. The actual shape is owned\nby the mailbox DO; this is a best-effort mirror so the spec has\n*something* to point at. Update as the DO surface stabilizes.",
+        "required": [
+          "id",
+          "last_message_at",
+          "message_count",
+          "participants",
+          "label_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "last_message_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subject_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Encrypted subject ciphertext (base64url)."
+          },
+          "snippet_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Encrypted snippet ciphertext (base64url)."
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "label_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ToggleMessageLabelReq": {
+        "type": "object",
+        "required": [
+          "message_id",
+          "label_id",
+          "set"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "label_id": {
+            "type": "string"
+          },
+          "set": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UpdateLabelReq": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UserView": {
+        "type": "object",
+        "required": [
+          "id",
+          "handle",
+          "is_admin",
+          "addresses"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pub_key_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "auth",
+      "description": "Bootstrap + WebAuthn ceremonies + session lifecycle."
+    },
+    {
+      "name": "me",
+      "description": "Authenticated user's profile and owned addresses."
+    },
+    {
+      "name": "passkeys",
+      "description": "Per-user passkey credential management."
+    },
+    {
+      "name": "mail",
+      "description": "Threads, messages, and sending."
+    },
+    {
+      "name": "drafts",
+      "description": "Encrypted draft persistence."
+    },
+    {
+      "name": "labels",
+      "description": "User-defined labels and message-label edges."
+    },
+    {
+      "name": "attachments",
+      "description": "R2-backed encrypted attachment storage."
+    },
+    {
+      "name": "admin",
+      "description": "Admin-only invites, user listing, and address ownership."
+    },
+    {
+      "name": "misc",
+      "description": "Public, unauthenticated config."
+    }
+  ]
+}

@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["worker"]
+members = ["worker", "openapi-gen"]
+# openapi-gen is a native (host-target) binary that generates `openapi.json`
+# from #[utoipa::path] annotations. It is never built for wasm.
+default-members = ["worker"]
 
 [profile.release]
 opt-level = "z"

@@ -11,7 +11,7 @@
 # Configuration lives in wrangler.jsonc (vars block). The Rust target is
 # wasm32-unknown-unknown; `make install` adds it if missing.
 
-.PHONY: install web worker build dev deploy clean check
+.PHONY: install web worker build dev deploy clean check openapi
 
 install:
 	npm install
@@ -40,3 +40,8 @@ check:
 clean:
 	rm -rf web/dist web/node_modules/.vite
 	rm -rf worker/build target
+
+# Regenerate openapi.json from the #[utoipa::path] annotations in
+# openapi-gen/. Runs natively (not wasm) and writes to repo root.
+openapi:
+	cargo run -q -p openapi-gen
