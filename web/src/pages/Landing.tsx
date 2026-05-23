@@ -29,10 +29,13 @@ export default function Landing() {
           mail that nobody else reads.
         </h1>
         <p className="mx-auto mt-5 max-w-xl text-base leading-7">
-          Your subject lines, your messages, your attachments — all sealed
-          to a key that only your device holds. We can&apos;t read them.
-          Cloudflare can&apos;t read them. Sign in with your face or your
-          fingerprint; no passwords to forget or get stolen.
+          Your messages and attachments are locked with a key that
+          only your phone or laptop has. While they sit on our
+          servers, no one else can read them. Not us. Not Cloudflare.
+          When you send a message to a Gmail or Outlook inbox, it
+          leaves us as a normal email, so the person you wrote to can
+          read it like any other email they get. Sign in with your
+          face or fingerprint. No passwords to forget or get stolen.
         </p>
         <div className="mt-7 flex items-center justify-center gap-3">
           <Link to="/login" className="btn btn-primary label px-4 py-3">
@@ -47,8 +50,8 @@ export default function Landing() {
       <section className="hair-all grid grid-cols-1 md:grid-cols-3">
         <Feature
           tag="01"
-          title="only you can read it"
-          body="every email gets locked with a key that lives on your device. open it with your face, your fingerprint, or a hardware key — same way you unlock your phone."
+          title="we can't read your mail"
+          body="your messages and attachments are locked with a key that only your phone or laptop has. open them with your face, your fingerprint, or a hardware key, the same way you unlock your phone."
         />
         <Feature
           tag="02"
@@ -59,7 +62,7 @@ export default function Landing() {
         <Feature
           tag="03"
           title="works like normal email"
-          body="send and receive from any address. plus-addressing, attachments, threading. nothing to install — just visit on any device with a passkey."
+          body="send and receive from any address. plus addresses, attachments, threads. nothing to install. just visit on any device with a passkey."
           border="hair-l"
         />
       </section>
@@ -71,8 +74,8 @@ export default function Landing() {
         <div className="label">HOSTED HERE · SELF-HOST AVAILABLE</div>
         <p className="text-mute mx-auto mt-3 max-w-xl text-sm leading-6">
           You&apos;re looking at a hosted instance. If you&apos;d rather
-          run your own — on your own Cloudflare account, your own domain,
-          your own data — keep reading.
+          run your own, on your own Cloudflare account, your own
+          domain, your own data, keep reading.
         </p>
       </section>
 
@@ -87,17 +90,17 @@ export default function Landing() {
         <p className="mt-3 max-w-xl text-sm leading-6">
           bmail is open source and runs end-to-end on a single
           Cloudflare account. one wrangler deploy and you&apos;re your
-          own email provider — no servers to babysit, no third-party
+          own email provider. no servers to babysit, no third-party
           mail relay, no plaintext at rest.
         </p>
 
         <ul className="hair-t mt-6 grid grid-cols-1 gap-y-2 pt-6 text-sm leading-6 md:grid-cols-2">
-          <li>— Cloudflare Workers (Rust, workers-rs)</li>
-          <li>— Durable Objects (SQLite-backed)</li>
-          <li>— R2 for ciphertext blobs</li>
-          <li>— Email Routing (inbound) + Email Sending (outbound)</li>
-          <li>— React + Vite + Tailwind frontend</li>
-          <li>— WebAuthn PRF + X25519 sealed boxes</li>
+          <li>· Cloudflare Workers (Rust, workers-rs)</li>
+          <li>· Durable Objects (SQLite-backed)</li>
+          <li>· R2 for ciphertext blobs</li>
+          <li>· Email Routing (inbound) + Email Sending (outbound)</li>
+          <li>· React + Vite + Tailwind frontend</li>
+          <li>· WebAuthn PRF + X25519 sealed boxes</li>
         </ul>
 
         <div className="hair-t mt-6 grid grid-cols-1 gap-4 pt-6 md:grid-cols-3">
@@ -127,19 +130,29 @@ export default function Landing() {
       </section>
 
       <section className="hair-all hair-t-0 mt-6 p-6">
-        <div className="label">UNDER THE HOOD · WHAT&apos;S ENCRYPTED</div>
+        <div className="label">HOW YOUR MAIL IS PROTECTED</div>
         <p className="mt-2 text-sm leading-6">
-          Subject, body, attachments, and snippets are sealed to your
-          X25519 public key the moment the worker receives them. The
-          matching private key lives only in your authenticator and on
-          your device&apos;s memory after unlock — never on disk
-          plaintext, never on a server.
+          The moment a message arrives, we lock it with your personal
+          key. That key lives in your phone or laptop, behind your
+          face, fingerprint, or hardware key. It is never written to a
+          disk in plain form and never sent to a server. We hold the
+          locked copy. You hold the only key that opens it.
         </p>
         <p className="text-mute mt-3 text-xs leading-5">
-          What stays readable: envelope metadata (from, to, date,
-          message-id) so the worker can route and thread. Same
-          trade-off Proton Mail makes — content private, routing
-          metadata required to deliver.
+          What still has to be readable on our side: the envelope (who
+          sent it, who it&apos;s for, the date, the message ID), so we
+          can deliver it to the right inbox and group replies into the
+          right conversation.
+        </p>
+        <p className="text-mute mt-3 text-xs leading-5">
+          What we can&apos;t protect: messages you send to people who
+          don&apos;t use bmail. They leave our system as a normal
+          email, so the person you wrote to and their email provider
+          (Gmail, Outlook, anywhere else) can read them like any other
+          message. End-to-end privacy needs both sides. Until your
+          recipient is also encrypted, that last step is regular
+          email. This is the same compromise Proton Mail and every
+          other privacy-focused email service makes.
         </p>
       </section>
 
