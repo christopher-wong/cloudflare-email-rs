@@ -62,6 +62,44 @@ export default function Thread() {
     initialExpansionApplied.current = false;
   }, [id]);
 
+  // Pull the user's labels once per mount. Cheap; small data set; the
+  // user can change them in Labels.tsx and we'll refresh via the realtime
+  // signal that fires whenever a label is created/deleted (TODO: emit
+  // those events too — for now we just stale-tolerate until next mount).
+  const [labels, setLabels] = useState<api.Label[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    api.get<api.Label[]>('/api/labels').then(
+      (l) => { if (!cancelled) setLabels(l); },
+      () => { /* tolerable: labels are optional polish */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
+
+  const toggleLabel = async (msgId: string, labelId: string, on: boolean) => {
+    // Optimistic patch — flip the local labels list immediately, let the
+    // realtime echo (message.label) reconcile if something diverges.
+    setMsgs((cur) =>
+      cur
+        ? cur.map((m) => {
+            if (m.id !== msgId) return m;
+            const has = m.labels.includes(labelId);
+            return {
+              ...m,
+              labels: on
+                ? (has ? m.labels : [...m.labels, labelId])
+                : m.labels.filter((id) => id !== labelId),
+            };
+          })
+        : cur,
+    );
+    try {
+      await api.post('/api/message-labels', { message_id: msgId, label_id: labelId, on });
+    } catch (e: any) {
+      setErr(e?.message || 'label toggle failed');
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -121,6 +159,7 @@ export default function Thread() {
           break;
         case 'message.read':
         case 'message.star':
+        case 'message.label':
           if (msgs?.some((m) => m.id === ev.msg_id)) void load();
           break;
       }
@@ -307,6 +346,45 @@ export default function Thread() {
                       ))}
                     </div>
                   )}
+                  <div className="hair-t mt-3 flex flex-wrap items-center gap-2 pt-3">
+                    <span className="label text-mute">labels</span>
+                    {d.row.labels.map((lid) => {
+                      const l = labels.find((x) => x.id === lid);
+                      return (
+                        <button
+                          key={lid}
+                          type="button"
+                          className="chip chip-inv"
+                          onClick={() => void toggleLabel(d.row.id, lid, false)}
+                          title="remove label"
+                        >
+                          {l?.name ?? lid}
+                          <span className="ml-1">×</span>
+                        </button>
+                      );
+                    })}
+                    {/* Native <select> for "add a label" — keeps a11y + mobile
+                        friendly, no custom popover. The "" sentinel value
+                        keeps the dropdown showing the prompt text until the
+                        user makes a real choice. */}
+                    {labels.filter((l) => !d.row.labels.includes(l.id)).length > 0 && (
+                      <select
+                        className="text-xs"
+                        value=""
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v) void toggleLabel(d.row.id, v, true);
+                        }}
+                      >
+                        <option value="">+ add label</option>
+                        {labels
+                          .filter((l) => !d.row.labels.includes(l.id))
+                          .map((l) => (
+                            <option key={l.id} value={l.id}>{l.name}</option>
+                          ))}
+                      </select>
+                    )}
+                  </div>
                 </div>
               )}
             </li>

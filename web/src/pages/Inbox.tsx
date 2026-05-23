@@ -19,15 +19,32 @@ export default function Inbox() {
   const [err, setErr] = useState<string | null>(null);
   const [selectedIdx, setSelectedIdx] = useState<number>(-1);
   const [query, setQuery] = useState('');
+  const [labels, setLabels] = useState<api.Label[]>([]);
+  /** label_id to filter by, or '' for all. */
+  const [labelFilter, setLabelFilter] = useState<string>('');
+  /** thread ids that are checked for bulk actions. */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const searchRef = useRef<HTMLInputElement | null>(null);
   const rowRefs = useRef<Array<HTMLLIElement | null>>([]);
   const { state } = useApp();
   const nav = useNavigate();
 
+  useEffect(() => {
+    let cancelled = false;
+    api.get<api.Label[]>('/api/labels').then(
+      (l) => { if (!cancelled) setLabels(l); },
+      () => { /* labels optional */ },
+    );
+    return () => { cancelled = true; };
+  }, []);
+
   const load = async () => {
     try {
-      const t = await api.get<api.ThreadRow[]>('/api/threads?limit=100&inbound_only=1');
+      const qs = new URLSearchParams({ limit: '100', inbound_only: '1' });
+      if (labelFilter) qs.set('label', labelFilter);
+      const t = await api.get<api.ThreadRow[]>(`/api/threads?${qs.toString()}`);
       setThreads(t);
+      setSelected(new Set()); // clear selection on every fresh load
     } catch (e: any) {
       setErr(e?.message || 'load failed');
     }
@@ -35,6 +52,9 @@ export default function Inbox() {
 
   useEffect(() => {
     void load();
+  }, [labelFilter]);
+
+  useEffect(() => {
     return realtime.subscribe((ev) => {
       // Re-fetch on anything that could change what the inbox shows:
       // a new inbound message, a thread or message getting deleted from
@@ -48,11 +68,33 @@ export default function Inbox() {
         case 'message.delete':
         case 'message.read':
         case 'message.star':
+        case 'message.label':
           void load();
           break;
       }
     });
   }, []);
+
+  const toggleSelected = (id: string) => {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkDelete = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    if (!confirm(`delete ${ids.length} thread${ids.length === 1 ? '' : 's'}?`)) return;
+    setThreads((cur) => (cur ? cur.filter((t) => !selected.has(t.id)) : cur));
+    setSelected(new Set());
+    await Promise.allSettled(
+      ids.map((id) => api.del(`/api/threads/${encodeURIComponent(id)}`)),
+    );
+    // Reload to reconcile if any of the deletes failed.
+    void load();
+  };
 
   const deleteThread = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -188,9 +230,29 @@ export default function Inbox() {
     <div className="flex h-full flex-col">
       <Toolbar
         right={
-          <Link to="/compose" className="btn btn-primary label">
-            compose ▸
-          </Link>
+          selected.size > 0 ? (
+            <>
+              <span className="text-mute label">{selected.size} selected</span>
+              <button
+                type="button"
+                className="btn label"
+                onClick={() => void bulkDelete()}
+              >
+                delete
+              </button>
+              <button
+                type="button"
+                className="btn label"
+                onClick={() => setSelected(new Set())}
+              >
+                clear
+              </button>
+            </>
+          ) : (
+            <Link to="/compose" className="btn btn-primary label">
+              compose ▸
+            </Link>
+          )
         }
       >
         <span className="label">inbox</span>
@@ -206,6 +268,18 @@ export default function Inbox() {
           className="ml-2 w-32 px-2 py-1 text-xs sm:w-64"
           aria-label="search inbox"
         />
+        <select
+          className="ml-1 px-2 py-1 text-xs"
+          value={labelFilter}
+          onChange={(e) => setLabelFilter(e.target.value)}
+          aria-label="filter by label"
+          title="filter by label"
+        >
+          <option value="">all labels</option>
+          {labels.map((l) => (
+            <option key={l.id} value={l.id}>{l.name}</option>
+          ))}
+        </select>
       </Toolbar>
 
       {threads === null && !err && <Loader />}
@@ -235,12 +309,21 @@ export default function Inbox() {
                 key={t.id}
                 ref={(el) => { rowRefs.current[i] = el; }}
                 className={
-                  'row ' +
+                  'row row-mselect ' +
                   (t.unread_count > 0 ? 'unread ' : '') +
-                  (isSelected ? 'inv' : '')
+                  (isSelected ? 'inv ' : '') +
+                  (selected.has(t.id) ? 'selected' : '')
                 }
                 onClick={() => nav(`/thread/${t.id}`)}
               >
+                <input
+                  type="checkbox"
+                  className="cursor-pointer"
+                  checked={selected.has(t.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => toggleSelected(t.id)}
+                  aria-label={`select thread from ${sender}`}
+                />
                 <Avatar seed={t.first_from_addr ?? sender} />
                 <div className="min-w-0">
                   {/* Top row: bold sender on the left, count + star chips

@@ -256,6 +256,14 @@ impl MailboxDO {
             .find(|(k, _)| k == "inbound_only")
             .map(|(_, v)| v == "1")
             .unwrap_or(false);
+        // Optional ?label=<label_id> — keep only threads that contain at
+        // least one message tagged with that label. Done at SQL time so
+        // the client can offer fast filter without per-thread roundtrips.
+        let label_id: Option<String> = url
+            .query_pairs()
+            .find(|(k, _)| k == "label")
+            .map(|(_, v)| v.to_string())
+            .filter(|s| !s.is_empty());
 
         #[derive(Deserialize)]
         struct Row {
@@ -273,32 +281,38 @@ impl MailboxDO {
         } else {
             ""
         };
+        let label_clause = if label_id.is_some() {
+            " AND EXISTS (SELECT 1 FROM messages m
+                          JOIN message_labels ml ON ml.message_id = m.id
+                          WHERE m.thread_id = threads.id AND ml.label_id = ?)"
+        } else {
+            ""
+        };
         let rows: Vec<Row> = if let Some(b) = before {
             let sql_text = format!(
                 "SELECT id, subject_hint, participants, last_message_at,
                     message_count, unread_count, has_starred, archived
                  FROM threads
-                 WHERE archived = ? AND last_message_at < ?{inbound_clause}
+                 WHERE archived = ? AND last_message_at < ?{inbound_clause}{label_clause}
                  ORDER BY last_message_at DESC LIMIT ?"
             );
-            self.sql().exec(
-                &sql_text,
-                Some(vec![(archived as i64).into(), b.into(), limit.into()]),
-            )?
+            let mut params: Vec<SqlStorageValue> = vec![(archived as i64).into(), b.into()];
+            if let Some(ref l) = label_id { params.push(l.clone().into()); }
+            params.push(limit.into());
+            self.sql().exec(&sql_text, Some(params))?.to_array()?
         } else {
             let sql_text = format!(
                 "SELECT id, subject_hint, participants, last_message_at,
                     message_count, unread_count, has_starred, archived
                  FROM threads
-                 WHERE archived = ?{inbound_clause}
+                 WHERE archived = ?{inbound_clause}{label_clause}
                  ORDER BY last_message_at DESC LIMIT ?"
             );
-            self.sql().exec(
-                &sql_text,
-                Some(vec![(archived as i64).into(), limit.into()]),
-            )?
-        }
-        .to_array()?;
+            let mut params: Vec<SqlStorageValue> = vec![(archived as i64).into()];
+            if let Some(ref l) = label_id { params.push(l.clone().into()); }
+            params.push(limit.into());
+            self.sql().exec(&sql_text, Some(params))?.to_array()?
+        };
         let mut out: Vec<ThreadRow> = Vec::with_capacity(rows.len());
         #[derive(Deserialize)]
         struct First {
@@ -853,14 +867,20 @@ impl MailboxDO {
         if body.on {
             sql.exec(
                 "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?, ?)",
-                Some(vec![body.message_id.into(), body.label_id.into()]),
+                Some(vec![body.message_id.clone().into(), body.label_id.clone().into()]),
             )?;
         } else {
             sql.exec(
                 "DELETE FROM message_labels WHERE message_id = ? AND label_id = ?",
-                Some(vec![body.message_id.into(), body.label_id.into()]),
+                Some(vec![body.message_id.clone().into(), body.label_id.clone().into()]),
             )?;
         }
+        self.broadcast(&serde_json::json!({
+            "type": "message.label",
+            "msg_id": body.message_id,
+            "label_id": body.label_id,
+            "on": body.on,
+        }));
         Response::ok("{}")
     }
 

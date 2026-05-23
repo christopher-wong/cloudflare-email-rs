@@ -158,6 +158,15 @@
   }
   .row:hover { background: #000; color: #fff; }
   .row.unread .row-sender { font-weight: 700; }
+  /* Selected (checkbox-checked) row: black background, white text — same
+     as hover. We use a separate class so the visual remains while the
+     pointer moves off the row. */
+  .row.selected { background: #000; color: #fff; }
+  /* Inbox row with a leading checkbox for multi-select. Same shape as
+     .row plus a checkbox column at the start. */
+  .row.row-mselect {
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  }
 
   /* Field row used in forms */
   .field {

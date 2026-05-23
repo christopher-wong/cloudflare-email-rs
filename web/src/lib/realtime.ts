@@ -32,6 +32,7 @@ export type RealtimeEvent =
   | { type: 'message.star'; msg_id: string; starred: boolean }
   | { type: 'message.delete'; msg_id: string; thread_id?: string | null }
   | { type: 'thread.delete'; thread_id: string }
+  | { type: 'message.label'; msg_id: string; label_id: string; on: boolean }
   | { type: 'draft.upsert'; draft_id: string; updated_at: number }
   | { type: 'draft.delete'; draft_id: string }
   | { type: string; [k: string]: unknown };
