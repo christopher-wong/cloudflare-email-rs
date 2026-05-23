@@ -62,6 +62,31 @@ pub async fn delete_thread(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> Api
     super::json_ok(&serde_json::json!({ "deleted_blobs": resp.r2_keys.len() }))
 }
 
+/// Upgrade the request to a WebSocket and hand off to the user's
+/// MailboxDO, which holds the connection (hibernatably) and broadcasts
+/// new-message events when `email_in` and `send` insert messages.
+pub async fn realtime(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<Response> {
+    let s = require_auth(&req, env).await?;
+    let upgrade = req
+        .headers()
+        .get("upgrade")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if upgrade != "websocket" {
+        return Err(ApiError::BadRequest("expected websocket upgrade".into()));
+    }
+    let stub = mailbox_stub(env, &s.user_id)?;
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get);
+    let headers = Headers::new();
+    headers.set("Upgrade", "websocket").map_err(ApiError::from)?;
+    init.with_headers(headers);
+    let sub_req =
+        Request::new_with_init("https://do/realtime", &init).map_err(ApiError::from)?;
+    stub.fetch_with_request(sub_req).await.map_err(ApiError::from)
+}
+
 pub async fn patch_message(
     mut req: HttpRequest,
     env: &Env,
@@ -210,6 +235,21 @@ pub async fn send(mut req: HttpRequest, env: &Env, cfg: &AppConfig) -> ApiResult
         )
         .await?;
     }
+
+    // Realtime push to any open tabs. Best-effort — the message is sent
+    // and stored regardless.
+    let _ = stub_json::<serde_json::Value>(
+        &mailbox,
+        Method::Post,
+        "/notify",
+        Some(serde_json::json!({
+            "type": "message.new",
+            "direction": "out",
+            "msg_id": msg_id,
+            "thread_id": ins.thread_id,
+        })),
+    )
+    .await;
 
     super::json_ok(&SendResp {
         message_id: sent_message_id,

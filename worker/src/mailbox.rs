@@ -41,8 +41,33 @@ impl DurableObject for MailboxDO {
             (Method::Post, "/attachments") => self.add_attachment(req).await,
             (Method::Get, "/attachments") => self.list_attachments(req).await,
             (Method::Delete, "/attachments") => self.delete_attachment(req).await,
+            (Method::Get, "/realtime") => self.realtime_upgrade(req).await,
+            (Method::Post, "/notify") => self.notify(req).await,
             _ => Response::error("not found", 404),
         }
+    }
+
+    // Realtime WebSocket lifecycle. We don't act on client-sent frames or
+    // log every close (Cloudflare wakes the DO for each event), so these are
+    // intentional no-ops. accept_web_socket auto-untracks closed connections.
+    async fn websocket_message(
+        &self,
+        _ws: WebSocket,
+        _message: WebSocketIncomingMessage,
+    ) -> Result<()> {
+        Ok(())
+    }
+    async fn websocket_close(
+        &self,
+        _ws: WebSocket,
+        _code: usize,
+        _reason: String,
+        _was_clean: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+    async fn websocket_error(&self, _ws: WebSocket, _error: Error) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -526,6 +551,40 @@ impl MailboxDO {
     /// deleting (raw_r2_key + each attachment.r2_key). We don't delete from
     /// R2 in here because the DO doesn't have an R2 binding; the worker
     /// orchestrates it.
+    /// Realtime push channel. The SPA opens a WebSocket to /api/realtime,
+    /// the worker authenticates and forwards the upgrade to this method on
+    /// the user's mailbox. We accept via `accept_web_socket` so the DO can
+    /// hibernate while the connection is idle — Cloudflare wakes us only
+    /// when a `notify` arrives or the client disconnects.
+    async fn realtime_upgrade(&self, req: Request) -> Result<Response> {
+        let upgrade = req
+            .headers()
+            .get("Upgrade")?
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if upgrade != "websocket" {
+            return Response::error("expected websocket upgrade", 400);
+        }
+        let pair = WebSocketPair::new()?;
+        self.state.accept_web_socket(&pair.server);
+        Response::from_websocket(pair.client)
+    }
+
+    /// Broadcast a small JSON event to every attached realtime socket on
+    /// this mailbox. Fired from the worker after a successful inbound or
+    /// outbound message insert. Best-effort: per-socket send failures are
+    /// logged and skipped; we never propagate them to the caller.
+    async fn notify(&self, mut req: Request) -> Result<Response> {
+        let body: serde_json::Value = req.json().await.unwrap_or(serde_json::Value::Null);
+        let msg = serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string());
+        for ws in self.state.get_websockets() {
+            if let Err(e) = ws.send_with_str(&msg) {
+                console_log!("mailbox.notify.send_failed err={e}");
+            }
+        }
+        Response::ok("{}")
+    }
+
     async fn delete_thread(&self, req: Request) -> Result<Response> {
         let url = req.url()?;
         let tid = url

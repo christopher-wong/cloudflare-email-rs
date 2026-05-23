@@ -13,6 +13,7 @@ import EmptyState from '@/components/EmptyState';
 
 import * as api from '@/lib/api';
 import { b64uDecode, openSealedString } from '@/lib/crypto';
+import * as realtime from '@/lib/realtime';
 import { sessionPriv } from '@/lib/webauthn';
 import { absoluteDate, relativeDate } from '@/lib/time';
 
@@ -31,7 +32,7 @@ export default function Thread() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const load = async () => {
       try {
         const data = await api.get<api.MessageRow[]>(`/api/threads/${id}`);
         if (cancelled) return;
@@ -46,8 +47,17 @@ export default function Thread() {
       } catch (e: any) {
         if (!cancelled) setErr(e?.message || 'load failed');
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    void load();
+    const unsub = realtime.subscribe((ev) => {
+      // Only refresh if the new message belongs to THIS thread, or if no
+      // thread_id was sent (inbound notify omits it — re-fetch defensively).
+      if (ev.type === 'message.new') {
+        const tid = (ev as { thread_id?: string }).thread_id;
+        if (!tid || tid === id) void load();
+      }
+    });
+    return () => { cancelled = true; unsub(); };
   }, [id]);
 
   const priv = sessionPriv();

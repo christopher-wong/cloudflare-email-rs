@@ -8,6 +8,7 @@ import Loader from '@/components/Loader';
 import * as api from '@/lib/api';
 import { b64uDecode, openSealedString } from '@/lib/crypto';
 import { sessionPriv } from '@/lib/webauthn';
+import * as realtime from '@/lib/realtime';
 import { relativeDate } from '@/lib/time';
 import { useApp } from '@/lib/store';
 
@@ -26,7 +27,12 @@ export default function Inbox() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void load();
+    return realtime.subscribe((ev) => {
+      if (ev.type === 'message.new' && ev.direction === 'in') void load();
+    });
+  }, []);
 
   const deleteThread = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();

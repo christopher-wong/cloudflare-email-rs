@@ -10,6 +10,7 @@ import EmptyState from '@/components/EmptyState';
 import * as api from '@/lib/api';
 import { b64uDecode, openSealedString } from '@/lib/crypto';
 import { sessionPriv } from '@/lib/webauthn';
+import * as realtime from '@/lib/realtime';
 import { relativeDate } from '@/lib/time';
 import { useApp } from '@/lib/store';
 
@@ -31,7 +32,12 @@ export default function Sent() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void load();
+    return realtime.subscribe((ev) => {
+      if (ev.type === 'message.new' && ev.direction === 'out') void load();
+    });
+  }, []);
 
   const decryptedSubjects = useMemo(() => {
     if (!threads) return new Map<string, string>();

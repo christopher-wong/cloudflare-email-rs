@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import * as api from './api';
+import * as realtime from './realtime';
 import { sessionClearPriv } from './webauthn';
 
 export interface User {
@@ -50,6 +51,7 @@ export function useAppProvider(): Ctx {
         }
       }
       setState({ status, me, loading: false });
+      if (me) realtime.start(); else realtime.stop();
     } catch {
       setState((s) => ({ ...s, loading: false }));
     }
@@ -57,6 +59,7 @@ export function useAppProvider(): Ctx {
 
   const logout = async () => {
     sessionClearPriv();
+    realtime.stop();
     try {
       await api.post('/api/auth/logout', {});
     } catch {}

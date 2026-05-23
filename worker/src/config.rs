@@ -58,7 +58,25 @@ impl AppConfig {
 }
 
 fn var(env: &Env, key: &str) -> Option<String> {
-    env.var(key).ok().map(|v| v.to_string())
+    // 1. Standard workers-rs API path. Works in #[event(fetch)] context.
+    if let Ok(v) = env.var(key) {
+        let s = v.to_string();
+        if !s.is_empty() {
+            return Some(s);
+        }
+    }
+    // 2. Fallback: read the value directly from the env JS object. In the
+    //    #[event(email)] handler (workers-rs rev 3d0903a), `env.var(...)`
+    //    rejects plain `vars` declared in wrangler.jsonc because the typed
+    //    binding cast fails — even though the property IS present on the
+    //    env object. This reflection path bypasses that check.
+    use worker::wasm_bindgen::{JsCast, JsValue};
+    let env_obj: &JsValue = env.unchecked_ref();
+    let raw = worker::js_sys::Reflect::get(env_obj, &JsValue::from_str(key)).ok()?;
+    if raw.is_undefined() || raw.is_null() {
+        return None;
+    }
+    raw.as_string().filter(|s| !s.is_empty())
 }
 
 pub fn rp_id(cfg: &AppConfig) -> String {

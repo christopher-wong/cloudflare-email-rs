@@ -78,7 +78,7 @@ async fn handle_impl(
         // configured catch-all, but for now drop is the safe default.)
         let canonical = canonical_address(&raw_to);
         let domains = cfg.all_domains();
-        console_log!(
+        console_warn!(
             "email_in.dropped reason=not-owned from={} to={:?} canonical={:?} owned_domains={:?} message_id={}",
             raw_from,
             raw_to,
@@ -195,7 +195,7 @@ async fn handle_impl(
         {
             Ok(v) => v,
             Err(_) => {
-                console_log!(
+                console_warn!(
                     "email_in.dropped reason=no-user-for-address from={} to={} rcpt={} message_id={}",
                     raw_from,
                     raw_to,
@@ -226,13 +226,20 @@ async fn handle_impl(
         };
 
         let subject_ct = crate::crypto::seal_to(&pk, subject.as_bytes())?;
-        let body_ct = crate::crypto::seal_to(
-            &pk,
+        // Prefer text/plain when senders provide a multipart/alternative.
+        // Fall back to a pragmatic HTML-to-text conversion for HTML-only
+        // mail so the Thread view doesn't render raw markup at the user.
+        // The original raw MIME is still stored in R2 (raw_r2_key) for any
+        // future "view original" affordance.
+        let display_body = if !text_body.is_empty() {
+            text_body.clone()
+        } else {
             html_body
                 .as_deref()
-                .unwrap_or(text_body.as_str())
-                .as_bytes(),
-        )?;
+                .map(html_to_text)
+                .unwrap_or_default()
+        };
+        let body_ct = crate::crypto::seal_to(&pk, display_body.as_bytes())?;
         let snippet_ct = crate::crypto::seal_to(&pk, snippet.as_bytes())?;
 
         // Store raw MIME ciphertext too — useful for showing original source
@@ -310,6 +317,24 @@ async fn handle_impl(
             attachments.len(),
             header_message_id,
         );
+
+        // Best-effort realtime push to any tabs the user has open. Don't
+        // propagate errors — the message is already stored, the push is
+        // just a courtesy.
+        if let Err(e) = api::stub_json::<serde_json::Value>(
+            &mailbox,
+            Method::Post,
+            "/notify",
+            Some(serde_json::json!({
+                "type": "message.new",
+                "direction": "in",
+                "msg_id": msg_id,
+            })),
+        )
+        .await
+        {
+            console_log!("email_in.notify_failed err={e}");
+        }
     }
 
     Ok(())
@@ -329,4 +354,113 @@ fn strip_angle(s: impl AsRef<str>) -> String {
         .trim()
         .trim_matches(|c| c == '<' || c == '>')
         .to_string()
+}
+
+/// Convert an HTML body to a readable plain-text approximation.
+///
+/// We store this (not the original HTML) in the user's mailbox so the
+/// Thread view can render the body without an HTML sandbox or sanitizer.
+/// The conversion is intentionally pragmatic, not a faithful renderer:
+///
+/// - `<script>` and `<style>` blocks are removed entirely (case-insensitive).
+/// - Block-level tags (`<br>`, `<p>`, `<div>`, `<li>`) become newlines so
+///   paragraph breaks survive the round-trip.
+/// - All remaining tags are dropped.
+/// - A small set of common HTML entities are decoded.
+/// - Runs of blank lines collapse to at most one.
+///
+/// A future "view original" affordance can re-render the raw HTML in a
+/// sandboxed iframe — for now we prefer predictable text.
+pub fn html_to_text(html: &str) -> String {
+    let stripped = strip_block(&strip_block(html, "script"), "style");
+
+    // Insert paragraph/line breaks before tag-removal so we preserve them.
+    let mut buf = String::with_capacity(stripped.len());
+    let bytes = stripped.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            // Find the end of the tag.
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j] != b'>' {
+                j += 1;
+            }
+            if j >= bytes.len() {
+                break;
+            }
+            let tag = std::str::from_utf8(&bytes[i + 1..j])
+                .unwrap_or("")
+                .to_lowercase();
+            let tag_name = tag
+                .trim_start_matches('/')
+                .split(|c: char| c.is_whitespace() || c == '>')
+                .next()
+                .unwrap_or("");
+            match tag_name {
+                "br" | "p" | "div" | "li" | "tr" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                    buf.push('\n');
+                }
+                _ => {}
+            }
+            i = j + 1;
+        } else {
+            buf.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    // Decode common entities (covers the >95% case; numeric entities are
+    // intentionally ignored to keep this dependency-free).
+    let decoded = buf
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'");
+
+    // Collapse 2+ blank lines to one, trim per-line whitespace.
+    let mut out = String::with_capacity(decoded.len());
+    let mut blank_run = 0;
+    for line in decoded.lines() {
+        let t = line.trim_end();
+        if t.trim().is_empty() {
+            blank_run += 1;
+            if blank_run <= 2 {
+                out.push('\n');
+            }
+        } else {
+            blank_run = 0;
+            out.push_str(t);
+            out.push('\n');
+        }
+    }
+    out.trim().to_string()
+}
+
+/// Drop every `<tag>...</tag>` block (case-insensitive) from a string.
+fn strip_block(s: &str, tag: &str) -> String {
+    let lower = s.to_lowercase();
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        match lower[i..].find(&open) {
+            Some(rel) => {
+                out.push_str(&s[i..i + rel]);
+                let from = i + rel;
+                match lower[from..].find(&close) {
+                    Some(end) => i = from + end + close.len(),
+                    None => break,
+                }
+            }
+            None => {
+                out.push_str(&s[i..]);
+                break;
+            }
+        }
+    }
+    out
 }
