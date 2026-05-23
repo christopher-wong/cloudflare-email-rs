@@ -41,6 +41,16 @@ export default function Admin() {
 
   useEffect(() => { void refresh(); }, []);
 
+  const deleteInvite = async (token: string) => {
+    if (!confirm('revoke this invite?')) return;
+    try {
+      await api.del(`/api/admin/invites/${encodeURIComponent(token)}`);
+      await refresh();
+    } catch (e: any) {
+      setErr(e?.message || 'delete failed');
+    }
+  };
+
   if (!state.me?.is_admin) {
     return <div className="p-8 text-center label">admin only</div>;
   }
@@ -61,7 +71,7 @@ export default function Admin() {
         {invites.length > 0 && (
           <ul>
             {invites.map((i) => (
-              <li key={i.token} className="hair-b grid grid-cols-[1fr_auto] gap-3 p-3">
+              <li key={i.token} className="hair-b grid grid-cols-[1fr_auto_auto] gap-3 p-3">
                 <div>
                   <div className="text-xs">
                     {i.addresses.join(', ')} {i.is_admin && <span className="chip ml-2">ADMIN</span>}
@@ -79,6 +89,13 @@ export default function Admin() {
                   }
                 >
                   copy link
+                </button>
+                <button
+                  className="btn label"
+                  onClick={() => deleteInvite(i.token)}
+                  title="revoke this invite"
+                >
+                  revoke
                 </button>
               </li>
             ))}

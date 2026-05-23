@@ -75,6 +75,18 @@ pub async fn list_invites(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiR
     stub_passthrough(&registry_stub(env)?, Method::Get, "/invites", None).await
 }
 
+pub async fn delete_invite(
+    req: HttpRequest,
+    env: &Env,
+    _cfg: &AppConfig,
+) -> ApiResult<Response> {
+    let _ = require_admin_session(&req, env).await?;
+    let token = super::last_segment(&req)
+        .ok_or_else(|| ApiError::BadRequest("token required".into()))?;
+    let path = format!("/invites?token={}", urlencoding::encode(&token));
+    stub_passthrough(&registry_stub(env)?, Method::Delete, &path, None).await
+}
+
 pub async fn list_users(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<Response> {
     let _ = require_admin_session(&req, env).await?;
     stub_passthrough(&registry_stub(env)?, Method::Get, "/users", None).await

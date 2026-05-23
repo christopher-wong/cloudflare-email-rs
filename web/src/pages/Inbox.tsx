@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import Toolbar from '@/components/Toolbar';
@@ -6,6 +6,8 @@ import EmptyState from '@/components/EmptyState';
 import Loader from '@/components/Loader';
 
 import * as api from '@/lib/api';
+import { b64uDecode, openSealedString } from '@/lib/crypto';
+import { sessionPriv } from '@/lib/webauthn';
 import { relativeDate } from '@/lib/time';
 import { useApp } from '@/lib/store';
 
@@ -27,6 +29,37 @@ export default function Inbox() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // Decrypt the first-message subject for each row. Cheap (one HKDF + AEAD
+  // per row), and the priv key stays in memory.
+  const decryptedSubjects = useMemo(() => {
+    if (!threads) return new Map<string, string>();
+    const priv = sessionPriv();
+    if (!priv) return new Map<string, string>();
+    const m = new Map<string, string>();
+    for (const t of threads) {
+      if (!t.first_subject_ct_b64) continue;
+      try {
+        m.set(t.id, openSealedString(b64uDecode(t.first_subject_ct_b64), priv));
+      } catch { /* decrypt failed for this row — leave undefined */ }
+    }
+    return m;
+  }, [threads]);
+
+  const ownAddresses = useMemo(
+    () => new Set((state.me?.addresses ?? []).map((a) => a.toLowerCase())),
+    [state.me?.addresses],
+  );
+
+  const labelFor = (t: api.ThreadRow): string => {
+    // For an inbound-first thread we show the sender; for an outbound-first
+    // thread we show "to <other parties>". Falls back to all participants.
+    if (t.first_direction === 'in' && t.first_from_addr) return t.first_from_addr;
+    const others = t.participants.filter((a) => !ownAddresses.has(a.toLowerCase()));
+    const list = others.length > 0 ? others : t.participants;
+    if (list.length === 0) return '(no participants)';
+    return list.slice(0, 3).join(', ') + (list.length > 3 ? ` +${list.length - 3}` : '');
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -51,31 +84,34 @@ export default function Inbox() {
       )}
       {threads && threads.length > 0 && (
         <ul className="flex-1 overflow-y-auto">
-          {threads.map((t) => (
-            <li
-              key={t.id}
-              className={'row ' + (t.unread_count > 0 ? 'unread' : '')}
-              onClick={() => nav(`/thread/${t.id}`)}
-            >
-              <div className="truncate">
-                {t.participants.slice(0, 3).join(', ')}
-                {t.participants.length > 3 && ` +${t.participants.length - 3}`}
-              </div>
-              <div className="flex items-center gap-2 truncate">
-                <span className="text-mute text-xs">[encrypted]</span>
-                {t.has_starred && <span className="chip">★</span>}
-                {t.message_count > 1 && (
-                  <span className="chip">{t.message_count}</span>
-                )}
-                {t.subject_hint && (
-                  <span className="truncate">{t.subject_hint}</span>
-                )}
-              </div>
-              <div className="text-right text-xs">
-                {relativeDate(t.last_message_at)}
-              </div>
-            </li>
-          ))}
+          {threads.map((t) => {
+            const subject = decryptedSubjects.get(t.id);
+            return (
+              <li
+                key={t.id}
+                className={'row ' + (t.unread_count > 0 ? 'unread' : '')}
+                onClick={() => nav(`/thread/${t.id}`)}
+              >
+                <div className="truncate">{labelFor(t)}</div>
+                <div className="flex items-center gap-2 truncate">
+                  {subject ? (
+                    <span className="truncate">{subject || '(no subject)'}</span>
+                  ) : (
+                    <span className="text-mute text-xs">
+                      {sessionPriv() ? '(no subject)' : '[encrypted]'}
+                    </span>
+                  )}
+                  {t.has_starred && <span className="chip">★</span>}
+                  {t.message_count > 1 && (
+                    <span className="chip">{t.message_count}</span>
+                  )}
+                </div>
+                <div className="text-right text-xs">
+                  {relativeDate(t.last_message_at)}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

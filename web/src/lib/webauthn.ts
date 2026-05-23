@@ -381,19 +381,44 @@ export async function addPasskey(opts?: { label?: string }): Promise<void> {
 }
 
 // -- Session-scoped priv ----------------------------------------------------
+//
+// The decrypted X25519 private key lives in `window` memory AND in
+// sessionStorage, so it survives a tab reload (sessionStorage is per-tab
+// and dropped on tab close). The first read after a reload rehydrates the
+// in-memory copy from sessionStorage.
+//
+// Trade-off: sessionStorage is plaintext on disk for the tab's lifetime.
+// An attacker with file-system access or a malicious browser extension that
+// can read storage could read the key. Versus the old "memory-only" model
+// (where a reload forced re-auth), this is a deliberate UX vs threat-model
+// shift toward UX: it matches what users expect from a session cookie.
+// Logout still zeroes both copies; closing the tab still loses the key.
 
 const PRIV_HANDLE = '__cfemail_priv_session__';
+const PRIV_STORAGE_KEY = 'cfemail.priv.b64';
 
 export async function sessionStashPriv(priv: Uint8Array): Promise<void> {
   (window as any)[PRIV_HANDLE] = priv;
+  try {
+    sessionStorage.setItem(PRIV_STORAGE_KEY, b64uEncode(priv));
+  } catch { /* storage disabled — fall back to memory-only */ }
 }
 export function sessionPriv(): Uint8Array | null {
-  return (window as any)[PRIV_HANDLE] || null;
+  const cached = (window as any)[PRIV_HANDLE] as Uint8Array | undefined;
+  if (cached) return cached;
+  try {
+    const s = sessionStorage.getItem(PRIV_STORAGE_KEY);
+    if (!s) return null;
+    const priv = b64uDecode(s);
+    (window as any)[PRIV_HANDLE] = priv;
+    return priv;
+  } catch { return null; }
 }
 export function sessionClearPriv(): void {
   const p = (window as any)[PRIV_HANDLE] as Uint8Array | undefined;
   if (p) p.fill(0);
   (window as any)[PRIV_HANDLE] = null;
+  try { sessionStorage.removeItem(PRIV_STORAGE_KEY); } catch { /* ignore */ }
 }
 
 // -- Wire types -------------------------------------------------------------

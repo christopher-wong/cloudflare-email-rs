@@ -67,6 +67,12 @@ export interface MeResp {
 export interface ThreadRow {
   id: string;
   subject_hint: string | null;
+  /** Ciphertext of the first message's subject — decrypt client-side. */
+  first_subject_ct_b64: string | null;
+  /** from_addr of the first message. Use with first_direction to label rows. */
+  first_from_addr: string | null;
+  /** "in" or "out" — direction of the first message in the thread. */
+  first_direction: 'in' | 'out' | null;
   participants: string[];
   last_message_at: number;
   message_count: number;

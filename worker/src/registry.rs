@@ -29,6 +29,7 @@ impl DurableObject for RegistryDO {
             (Method::Post, "/bootstrap") => self.bootstrap(req).await,
             (Method::Post, "/invites") => self.create_invite(req).await,
             (Method::Get, "/invites") => self.list_invites().await,
+            (Method::Delete, "/invites") => self.delete_invite(req).await,
             (Method::Post, "/invites/redeem") => self.redeem_invite(req).await,
             (Method::Post, "/challenge") => self.create_challenge(req).await,
             (Method::Post, "/challenge/consume") => self.consume_challenge(req).await,
@@ -130,6 +131,42 @@ impl RegistryDO {
             is_admin: body.is_admin,
             expires_at: expires,
         })
+    }
+
+    async fn delete_invite(&self, req: Request) -> Result<Response> {
+        // Accept the token from the query string. Only deletes *unredeemed*
+        // invites — once an invite has been redeemed it's part of an audit
+        // trail (the `redeemed_user_id` link), so revoke-then-leave is the
+        // honest model. If the row doesn't exist or is already redeemed, we
+        // 404 so the caller knows the call had no effect.
+        let url = req.url()?;
+        let token = url
+            .query_pairs()
+            .find(|(k, _)| k == "token")
+            .map(|(_, v)| v.to_string())
+            .ok_or_else(|| Error::RustError("token required".into()))?;
+
+        #[derive(Deserialize)]
+        struct Row { redeemed_user_id: Option<String> }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec(
+                "SELECT redeemed_user_id FROM invites WHERE token = ?",
+                Some(vec![token.clone().into()]),
+            )?
+            .to_array()?;
+        let row = match rows.into_iter().next() {
+            Some(r) => r,
+            None => return Response::error("invite not found", 404),
+        };
+        if row.redeemed_user_id.is_some() {
+            return Response::error("invite already redeemed", 409);
+        }
+        self.sql().exec(
+            "DELETE FROM invites WHERE token = ?",
+            Some(vec![token.into()]),
+        )?;
+        Response::ok("{}")
     }
 
     async fn list_invites(&self) -> Result<Response> {

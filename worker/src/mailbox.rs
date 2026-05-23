@@ -113,14 +113,17 @@ impl MailboxDO {
         #[derive(Deserialize)]
         struct TidRow { thread_id: String }
         if let Some(irt) = &body.in_reply_to {
-            let rows: Vec<TidRow> = sql
-                .exec(
-                    "SELECT thread_id FROM messages WHERE message_id = ?",
-                    Some(vec![irt.clone().into()]),
-                )?
-                .to_array()?;
-            if let Some(r) = rows.into_iter().next() {
-                return Ok(r.thread_id);
+            let irt = irt.trim().trim_matches(|c| c == '<' || c == '>').to_string();
+            if !irt.is_empty() {
+                let rows: Vec<TidRow> = sql
+                    .exec(
+                        "SELECT thread_id FROM messages WHERE message_id = ?",
+                        Some(vec![irt.into()]),
+                    )?
+                    .to_array()?;
+                if let Some(r) = rows.into_iter().next() {
+                    return Ok(r.thread_id);
+                }
             }
         }
         if let Some(refs) = &body.references {
@@ -260,11 +263,41 @@ impl MailboxDO {
             )?
         }
         .to_array()?;
-        let out: Vec<ThreadRow> = rows
-            .into_iter()
-            .map(|r| ThreadRow {
+        let mut out: Vec<ThreadRow> = Vec::with_capacity(rows.len());
+        #[derive(Deserialize)]
+        struct First {
+            #[serde(with = "serde_bytes")]
+            subject_ct: Vec<u8>,
+            from_addr: String,
+            direction: String,
+        }
+        for r in rows {
+            // First message in each thread (oldest sent_at). Pulls just enough
+            // for the inbox row label without dragging the body across.
+            let firsts: Vec<First> = self
+                .sql()
+                .exec(
+                    "SELECT subject_ct, from_addr, direction
+                     FROM messages
+                     WHERE thread_id = ?
+                     ORDER BY sent_at ASC LIMIT 1",
+                    Some(vec![r.id.clone().into()]),
+                )?
+                .to_array()?;
+            let (first_subject, first_from, first_dir) = match firsts.into_iter().next() {
+                Some(f) => (
+                    Some(crate::b64::url_encode(&f.subject_ct)),
+                    Some(f.from_addr),
+                    Some(f.direction),
+                ),
+                None => (None, None, None),
+            };
+            out.push(ThreadRow {
                 id: r.id,
                 subject_hint: r.subject_hint,
+                first_subject_ct_b64: first_subject,
+                first_from_addr: first_from,
+                first_direction: first_dir,
                 participants: serde_json::from_str(&r.participants.unwrap_or_default())
                     .unwrap_or_default(),
                 last_message_at: r.last_message_at,
@@ -272,8 +305,8 @@ impl MailboxDO {
                 unread_count: r.unread_count,
                 has_starred: r.has_starred != 0,
                 archived: r.archived != 0,
-            })
-            .collect();
+            });
+        }
         Response::from_json(&out)
     }
 
@@ -786,6 +819,15 @@ struct InsertMessageResp { thread_id: String }
 struct ThreadRow {
     id: String,
     subject_hint: Option<String>,
+    /// Ciphertext of the first message's subject — the client decrypts to
+    /// show a real subject in the inbox row without leaking plaintext to
+    /// the server. May be absent on legacy rows without a stored subject.
+    first_subject_ct_b64: Option<String>,
+    /// from_addr of the first message in the thread. Used to label the row
+    /// "from X" vs "to Y" based on the message direction.
+    first_from_addr: Option<String>,
+    /// direction of the first message ("in" or "out").
+    first_direction: Option<String>,
     participants: Vec<String>,
     last_message_at: i64,
     message_count: i64,

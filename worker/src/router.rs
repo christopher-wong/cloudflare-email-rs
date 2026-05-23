@@ -64,6 +64,7 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
 
         ("POST", "/api/admin/invites") => api::admin::create_invite(req, &env, &cfg).await,
         ("GET", "/api/admin/invites") => api::admin::list_invites(req, &env, &cfg).await,
+        ("DELETE", p) if p.starts_with("/api/admin/invites/") => api::admin::delete_invite(req, &env, &cfg).await,
         ("GET", "/api/admin/users") => api::admin::list_users(req, &env, &cfg).await,
         ("POST", "/api/admin/addresses") => api::admin::add_address(req, &env, &cfg).await,
         ("DELETE", p) if p.starts_with("/api/admin/addresses/") => api::admin::remove_address(req, &env, &cfg).await,
