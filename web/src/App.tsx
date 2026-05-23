@@ -5,6 +5,7 @@ import Chrome from '@/components/Chrome';
 import Loader from '@/components/Loader';
 
 import Bootstrap from '@/pages/Bootstrap';
+import Landing from '@/pages/Landing';
 import Login from '@/pages/Login';
 import Enroll from '@/pages/Enroll';
 import Inbox from '@/pages/Inbox';
@@ -55,6 +56,7 @@ function Router() {
       <Route path="/bootstrap" element={<Bootstrap />} />
       <Route path="/enroll" element={<Enroll />} />
       <Route path="/login" element={<Login />} />
+      {!state.me && <Route path="/" element={<Landing />} />}
       <Route element={<Authed />}>
         <Route element={<Chrome />}>
           <Route index element={<Inbox />} />

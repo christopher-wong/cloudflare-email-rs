@@ -199,9 +199,14 @@ export default function Chrome() {
   }, [state.me?.is_admin]);
 
   return (
-    <div className="grid h-full" style={{ gridTemplateRows: 'auto auto 1fr' }}>
-      <UnlockBanner />
-      <header className="hair-b sticky top-0 z-30 flex items-center justify-between gap-2 bg-white px-2 py-2 sm:px-4">
+    <div className="grid h-full" style={{ gridTemplateRows: 'auto 1fr' }}>
+      {/* UnlockBanner renders null when unlocked, so it costs zero layout
+          when it doesn't appear. Wrapping it with the header keeps the
+          outer grid at 2 rows (auto + 1fr) — adding a separate row makes
+          the 1fr content track lose its remaining-space sizing. */}
+      <div className="sticky top-0 z-30 bg-white">
+        <UnlockBanner />
+      <header className="hair-b flex items-center justify-between gap-2 bg-white px-2 py-2 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <button
             type="button"
@@ -237,6 +242,7 @@ export default function Chrome() {
           </button>
         </div>
       </header>
+      </div>
 
       <div
         className={
@@ -342,7 +348,7 @@ function UnlockBanner() {
   void tick;
   if (!state.me || sessionPriv()) return null;
   return (
-    <div className="hair-b sticky top-0 z-40 flex items-center justify-between gap-3 bg-white px-3 py-2 text-sm">
+    <div className="hair-b flex items-center justify-between gap-3 bg-white px-3 py-2 text-sm">
       <div>
         <span className="font-bold">vault locked</span>
         <span className="text-mute ml-2 text-xs">

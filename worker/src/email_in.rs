@@ -92,6 +92,22 @@ async fn handle_impl(
     let subject = parsed.subject().unwrap_or("").to_string();
     let text_body = parsed.body_text(0).map(|s| s.to_string()).unwrap_or_default();
     let html_body = parsed.body_html(0).map(|s| s.to_string());
+
+    // Privacy: count tracking artifacts (pixels + known tracker hosts) in
+    // the HTML body before we strip tags. Logged once at the email level so
+    // an operator can see what's coming in. We don't render HTML in Thread
+    // today (we display the text-converted body), so no tracker URLs
+    // actually fire — this is a visibility signal, not a block.
+    let tracker_count = html_body.as_deref().map(count_trackers).unwrap_or(0);
+    if tracker_count > 0 {
+        console_warn!(
+            "email_in.trackers count={} from={} to={} message_id={}",
+            tracker_count,
+            raw_from,
+            raw_to,
+            header_message_id,
+        );
+    }
     // Snippet is computed per-recipient below, from the final display body
     // (which prefers text/plain but falls back to html_to_text(html_body)).
     // Deriving it from text_body alone would empty the preview line for
@@ -359,6 +375,69 @@ struct Att {
     bytes: Vec<u8>,
 }
 
+/// Count tracking artifacts in an inbound HTML body. Looks for:
+///   1. `<img width="1" height="1">` (and the unquoted/single-quoted forms)
+///      — the classic tracking-pixel pattern.
+///   2. References to known tracking host substrings (mailgun, mailchimp,
+///      hubspot, sendgrid, klaviyo, google-analytics, segment, etc.).
+///
+/// Naive string match — not a full parser — and that's fine for a
+/// detector. False positives are mild (legitimate analytics URLs in the
+/// body); the cost of missing one is also mild today, since we render
+/// the text-converted body (no remote assets actually load). The value
+/// is operational visibility: every inbound with non-zero count shows
+/// up in `email_in.trackers` logs so we can monitor what the inbox is
+/// being fed.
+pub fn count_trackers(html: &str) -> usize {
+    let lower = html.to_lowercase();
+    let mut count = 0usize;
+    // Known tracking host substrings. Coarse on purpose — these match a
+    // domain anywhere in any href/src; we don't try to disambiguate
+    // legitimate vs. tracking URLs.
+    let domains = [
+        "mailgun.net", "mailgun.org",
+        "mixpanel.com",
+        "hubspot.com", "hs-analytics.net", "hubspotemail.net", "hubspotlinks.com",
+        "sendgrid.net",
+        "klaviyo.com", "klclick.com",
+        "google-analytics.com",
+        "track.constantcontact.com",
+        "icptrack.com",
+        "list-manage.com",
+        "campaign-monitor.com",
+        "createsend.com",
+        "rs6.net",
+        "u1.ct.sendgrid.net",
+        "elink.clickdimensions.com",
+        "intuit-pp.com",
+        "litmus.com",
+        "segment.io",
+        "branch.io",
+    ];
+    for needle in domains {
+        let mut start = 0usize;
+        while let Some(idx) = lower[start..].find(needle) {
+            count += 1;
+            start += idx + needle.len();
+        }
+    }
+    // 1x1 pixel patterns in <img> attributes.
+    for needle in [
+        "width=\"1\" height=\"1\"",
+        "width='1' height='1'",
+        "width=1 height=1",
+        "width=\"0\" height=\"0\"",
+        "width='0' height='0'",
+    ] {
+        let mut start = 0usize;
+        while let Some(idx) = lower[start..].find(needle) {
+            count += 1;
+            start += idx + needle.len();
+        }
+    }
+    count
+}
+
 /// Normalize an RFC822 Message-Id by stripping the surrounding `<>` and any
 /// surrounding whitespace. Reply-threading needs both sides to compare equal,
 /// and senders are inconsistent about whether they include the brackets.
@@ -567,5 +646,36 @@ mod tests {
     fn html_to_text_handles_input_with_no_tags() {
         let out = html_to_text("just plain text");
         assert_eq!(out, "just plain text");
+    }
+
+    #[test]
+    fn count_trackers_finds_1x1_pixels() {
+        let html =
+            r#"<img src="x" width="1" height="1"><img src="y" width='1' height='1'><img src="z" width=1 height=1>"#;
+        assert_eq!(count_trackers(html), 3);
+    }
+
+    #[test]
+    fn count_trackers_flags_known_domains() {
+        let html = r#"
+            <a href="https://klclick.com/abc?u=123">click</a>
+            <img src="https://e.mailgun.net/o/...">
+            <a href="https://example.com">benign</a>
+        "#;
+        // 2 trackers (klclick.com + mailgun.net), example.com is fine.
+        assert_eq!(count_trackers(html), 2);
+    }
+
+    #[test]
+    fn count_trackers_returns_zero_for_clean_html() {
+        let html = "<p>hello, this is a normal email</p><a href=\"https://example.com\">link</a>";
+        assert_eq!(count_trackers(html), 0);
+    }
+
+    #[test]
+    fn count_trackers_is_case_insensitive() {
+        // Sender uses capital letters in attrs or domains; still detected.
+        let html = r#"<IMG SRC="X" WIDTH="1" HEIGHT="1"><a href="MAILGUN.NET/pixel">px</a>"#;
+        assert!(count_trackers(html) >= 2);
     }
 }
