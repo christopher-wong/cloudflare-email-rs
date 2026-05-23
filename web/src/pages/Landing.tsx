@@ -62,6 +62,38 @@ export default function Landing() {
         />
       </section>
 
+      {/* How privacy actually works on this product — kept close to the
+          marketing features (above) because it's still consumer-facing
+          copy, just with the operational caveats spelled out. Moves the
+          "you hold the key" claim into specifics before the page pivots
+          to the developer / self-host pitch below. */}
+      <section className="hair-all mt-6 p-6">
+        <div className="label">HOW YOUR MAIL IS PROTECTED</div>
+        <p className="mt-2 text-sm leading-6">
+          The moment a message arrives, we lock it with your personal
+          key. That key lives in your phone or laptop, behind your
+          face, fingerprint, or hardware key. It is never written to a
+          disk in plain form and never sent to a server. We hold the
+          locked copy. You hold the only key that opens it.
+        </p>
+        <p className="text-mute mt-3 text-xs leading-5">
+          What still has to be readable on our side: the envelope (who
+          sent it, who it&apos;s for, the date, the message ID), so we
+          can deliver it to the right inbox and group replies into the
+          right conversation.
+        </p>
+        <p className="text-mute mt-3 text-xs leading-5">
+          What we can&apos;t protect: messages you send to people who
+          don&apos;t use bmail. They leave our system as a normal
+          email, so the person you wrote to and their email provider
+          (Gmail, Outlook, anywhere else) can read them like any other
+          message. End-to-end privacy needs both sides. Until your
+          recipient is also encrypted, that last step is regular
+          email. This is the same compromise Proton Mail and every
+          other privacy-focused email service makes.
+        </p>
+      </section>
+
       {/* The hosted vs self-host split. The line above the divider is
           aimed at end-users; below is for developers / operators who
           want to run their own copy. */}
@@ -122,33 +154,6 @@ export default function Landing() {
             deploy your own ▸
           </a>
         </div>
-      </section>
-
-      <section className="hair-all hair-t-0 mt-6 p-6">
-        <div className="label">HOW YOUR MAIL IS PROTECTED</div>
-        <p className="mt-2 text-sm leading-6">
-          The moment a message arrives, we lock it with your personal
-          key. That key lives in your phone or laptop, behind your
-          face, fingerprint, or hardware key. It is never written to a
-          disk in plain form and never sent to a server. We hold the
-          locked copy. You hold the only key that opens it.
-        </p>
-        <p className="text-mute mt-3 text-xs leading-5">
-          What still has to be readable on our side: the envelope (who
-          sent it, who it&apos;s for, the date, the message ID), so we
-          can deliver it to the right inbox and group replies into the
-          right conversation.
-        </p>
-        <p className="text-mute mt-3 text-xs leading-5">
-          What we can&apos;t protect: messages you send to people who
-          don&apos;t use bmail. They leave our system as a normal
-          email, so the person you wrote to and their email provider
-          (Gmail, Outlook, anywhere else) can read them like any other
-          message. End-to-end privacy needs both sides. Until your
-          recipient is also encrypted, that last step is regular
-          email. This is the same compromise Proton Mail and every
-          other privacy-focused email service makes.
-        </p>
       </section>
 
       <footer className="flex items-center justify-between py-8 text-xs">
