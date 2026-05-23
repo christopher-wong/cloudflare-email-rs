@@ -163,6 +163,12 @@ pub async fn backup(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<
     super::json_ok(&serde_json::json!({ "key": key, "size_bytes": size }))
 }
 
+/// The cron schedule string we tell the client about. Hard-coded here to
+/// mirror wrangler.jsonc's `triggers.crons` because Workers don't expose
+/// their own cron config to the runtime. Keep in sync manually; the
+/// scheduled handler will fire regardless of what this string says.
+const BACKUP_CRON: &str = "17 3 * * *"; // daily at 03:17 UTC
+
 pub async fn list_backups(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<Response> {
     let _ = require_admin_session(&req, env).await?;
     let r2 = env
@@ -195,7 +201,10 @@ pub async fn list_backups(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiR
     }
     // Newest first.
     out.sort_by(|a, b| b["key"].as_str().cmp(&a["key"].as_str()));
-    super::json_ok(&serde_json::json!({ "backups": out }))
+    super::json_ok(&serde_json::json!({
+        "backups": out,
+        "schedule_cron": BACKUP_CRON,
+    }))
 }
 
 pub async fn restore(mut req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<Response> {
