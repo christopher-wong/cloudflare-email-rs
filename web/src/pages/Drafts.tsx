@@ -15,18 +15,28 @@ export default function Drafts() {
   const [err, setErr] = useState<string | null>(null);
   const nav = useNavigate();
 
-  useEffect(() => {
-    let c = false;
-    (async () => {
-      try {
-        const d = await api.get<api.DraftRow[]>('/api/drafts');
-        if (!c) setDrafts(d);
-      } catch (e: any) {
-        if (!c) setErr(e?.message || 'load failed');
-      }
-    })();
-    return () => { c = true; };
-  }, []);
+  const load = async () => {
+    try {
+      const d = await api.get<api.DraftRow[]>('/api/drafts');
+      setDrafts(d);
+    } catch (e: any) {
+      setErr(e?.message || 'load failed');
+    }
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const deleteDraft = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!confirm('discard this draft?')) return;
+    setDrafts((cur) => (cur ? cur.filter((d) => d.id !== id) : cur));
+    try {
+      await api.del(`/api/drafts/${encodeURIComponent(id)}`);
+    } catch (err: any) {
+      setErr(err?.message || 'delete failed');
+      void load();
+    }
+  };
 
   const decoded = drafts?.map((d) => {
     const priv = sessionPriv();
@@ -61,6 +71,14 @@ export default function Drafts() {
               <div className="truncate">{d.to_addrs.join(', ') || '(no recipient)'}</div>
               <div className="truncate">{d.subject || '(no subject)'}</div>
               <div className="text-right text-xs">{relativeDate(d.updated_at)}</div>
+              <button
+                type="button"
+                className="btn label ml-2"
+                onClick={(e) => deleteDraft(e, d.id)}
+                title="discard draft"
+              >
+                discard
+              </button>
             </li>
           ))}
         </ul>
