@@ -76,10 +76,14 @@ async fn handle_impl(
     if recipients.is_empty() {
         // Not for us — let it drop. (We could `message.forward()` to a
         // configured catch-all, but for now drop is the safe default.)
+        let canonical = canonical_address(&raw_to);
+        let domains = cfg.all_domains();
         console_log!(
-            "email_in.dropped reason=not-owned from={} to={} message_id={}",
+            "email_in.dropped reason=not-owned from={} to={:?} canonical={:?} owned_domains={:?} message_id={}",
             raw_from,
             raw_to,
+            canonical,
+            domains,
             header_message_id,
         );
         return Ok(());

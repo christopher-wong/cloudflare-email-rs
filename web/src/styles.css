@@ -125,12 +125,13 @@
 
   /* A row in a list (inbox, sent, drafts, etc).
      Columns: sender | subject | date | optional action slot.
-     The sender column auto-sizes to the longest realistic address (capped at
-     22rem so a hostile address can't blow out the layout). `auto` slots
-     collapse cleanly for rows that don't have the date or action children. */
+     fit-content(22rem) sizes the first column to its content, capped at 22rem
+     before .truncate kicks in. Note: fit-content() can't be nested inside
+     minmax() — that combination is invalid CSS and silently collapses the
+     grid into a single column. */
   .row {
     display: grid;
-    grid-template-columns: minmax(0, fit-content(22rem)) minmax(0, 1fr) auto auto;
+    grid-template-columns: fit-content(22rem) minmax(0, 1fr) auto auto;
     align-items: center;
     gap: 1rem;
     padding: 0.625rem 0.875rem;
