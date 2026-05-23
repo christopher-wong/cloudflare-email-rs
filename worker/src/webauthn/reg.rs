@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+use ciborium::value::Value;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -19,11 +20,50 @@ struct ClientData {
     origin: String,
 }
 
-#[derive(Debug, Deserialize)]
 struct AttestationObject {
     fmt: String,
-    #[serde(rename = "authData", with = "serde_bytes")]
     auth_data: Vec<u8>,
+}
+
+/// Parse the CBOR attestation-object map by walking `Value::Map` directly.
+/// We previously used a serde-derived struct with `#[serde(with =
+/// "serde_bytes")]`, but ciborium 0.2's struct deserializer mishandles the
+/// byte-string `authData` when skipping the ignored `attStmt` field, surfacing
+/// as `invalid type: byte array, expected a sequence`. Walking the map by hand
+/// — same approach as `cose::parse` — sidesteps the issue and lets us be
+/// explicit about which CBOR types we accept.
+fn parse_attestation_object(bytes: &[u8]) -> Result<AttestationObject, String> {
+    let v: Value = ciborium::de::from_reader(bytes).map_err(|e| format!("cbor: {e}"))?;
+    let map = match v {
+        Value::Map(m) => m,
+        _ => return Err("attestationObject not a map".into()),
+    };
+    let mut fmt: Option<String> = None;
+    let mut auth_data: Option<Vec<u8>> = None;
+    for (k, val) in map {
+        let key = match k {
+            Value::Text(s) => s,
+            _ => continue,
+        };
+        match key.as_str() {
+            "fmt" => {
+                if let Value::Text(s) = val {
+                    fmt = Some(s);
+                }
+            }
+            "authData" => {
+                if let Value::Bytes(b) = val {
+                    auth_data = Some(b);
+                }
+            }
+            // `attStmt` and any extensions are intentionally ignored.
+            _ => {}
+        }
+    }
+    Ok(AttestationObject {
+        fmt: fmt.ok_or("missing fmt")?,
+        auth_data: auth_data.ok_or("missing authData")?,
+    })
 }
 
 #[derive(Debug)]
@@ -64,7 +104,7 @@ pub fn verify(
         return Err(format!("origin mismatch: {} vs {}", cd.origin, expected.origin));
     }
 
-    let att: AttestationObject = ciborium::de::from_reader(&attestation_object_bytes[..])
+    let att = parse_attestation_object(&attestation_object_bytes)
         .map_err(|e| format!("attestationObject cbor: {e}"))?;
     if att.fmt != "none" {
         // v1: only accept "none". Real-world platform authenticators and
