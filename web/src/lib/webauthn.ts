@@ -164,6 +164,14 @@ export async function registerWithInvite(
   });
 
   await sessionStashPriv(priv);
+  // Cache the wrap so a subsequent reload can unlock with Touch ID alone.
+  await rememberWrap({
+    wrapped_blob_b64: b64uEncode(passkeyWrapped),
+    wrap_salt_b64: b64uEncode(passkeyWrapSalt),
+    credential_id_b64: b64uEncode(new Uint8Array(credential.rawId)),
+    rp_id: options.rp.id,
+    prf_salt_b64: options.prf_salt_b64,
+  });
   return {
     user_id: result.user_id,
     is_admin: result.is_admin,
@@ -233,6 +241,14 @@ export async function login(): Promise<LoginResult> {
   const wrapKey = await deriveWrapKey(prfFirst);
   const priv = await unwrapPrivKey(b64uDecode(resp.wrap.wrapped_blob_b64), wrapKey);
   await sessionStashPriv(priv);
+  // Cache enough state to unlock without a fresh login next time.
+  await rememberWrap({
+    wrapped_blob_b64: resp.wrap.wrapped_blob_b64,
+    wrap_salt_b64: resp.wrap.wrap_salt_b64,
+    credential_id_b64: b64uEncode(new Uint8Array(assertion.rawId)),
+    rp_id: options.rp_id,
+    prf_salt_b64: options.prf_salt_b64,
+  });
 
   return {
     user_id: resp.user.id,
@@ -380,61 +396,89 @@ export async function addPasskey(opts?: { label?: string }): Promise<void> {
   });
 }
 
-// -- Persisted priv ---------------------------------------------------------
+// -- In-memory priv + IDB-cached wrapped blob -------------------------------
 //
-// The decrypted X25519 private key lives in `window` memory AND in
-// localStorage, so it survives:
-// - tab reload
-// - browser close + reopen
-// - opening a new tab in the same browser profile
+// The plaintext priv lives ONLY in `window` memory. We never persist it
+// to disk. This matches Proton's posture: an attacker with file-system
+// access can't directly lift the decryption key.
 //
-// Trade-off — localStorage is plaintext on disk, scoped to the origin.
-// Anyone with file-system access (a snooping roommate, a stolen laptop
-// without disk encryption, or a malicious browser extension that can
-// read storage) can lift the priv. We previously used sessionStorage
-// to bound the exposure to the tab's lifetime, but the resulting UX
-// (re-auth on every browser close) wasn't worth the marginal
-// protection — a determined local attacker can also drop a key
-// logger or steal the still-valid session cookie.
-//
-// Mitigations:
-// - The priv is zeroed in memory on logout and the localStorage entry
-//   is removed.
-// - The same key is *also* wrapped on the server (passkey PRF + recovery
-//   phrase), so revoking access still flows through the server-side
-//   credentials, not the local cache.
-// - Closing the browser without logging out leaves the priv resident.
-//   That's the same threat-model as a browser-saved password manager.
+// To avoid forcing a full re-login on every browser restart, we cache
+// the *wrapped* priv (server-issued ciphertext) + the credential id +
+// PRF salt in IndexedDB after the first login. On reload, the unlock()
+// flow runs a fresh passkey PRF ceremony with that cached credential to
+// derive the wrap key, then decrypts the cached wrapped blob into a
+// fresh in-memory priv. No server round-trip is needed for the unlock
+// (the session cookie is independent and still valid).
+
+import { clearCachedWrap, getCachedWrap, putCachedWrap } from './idb';
 
 const PRIV_HANDLE = '__cfemail_priv_session__';
-const PRIV_STORAGE_KEY = 'cfemail.priv.b64';
-
-function priv_storage(): Storage | null {
-  try { return window.localStorage; } catch { return null; }
-}
 
 export async function sessionStashPriv(priv: Uint8Array): Promise<void> {
   (window as any)[PRIV_HANDLE] = priv;
-  try {
-    priv_storage()?.setItem(PRIV_STORAGE_KEY, b64uEncode(priv));
-  } catch { /* storage disabled — fall back to memory-only */ }
 }
 export function sessionPriv(): Uint8Array | null {
-  const cached = (window as any)[PRIV_HANDLE] as Uint8Array | undefined;
-  if (cached) return cached;
-  try {
-    const s = priv_storage()?.getItem(PRIV_STORAGE_KEY);
-    if (!s) return null;
-    const priv = b64uDecode(s);
-    (window as any)[PRIV_HANDLE] = priv;
-    return priv;
-  } catch { return null; }
+  return ((window as any)[PRIV_HANDLE] as Uint8Array | undefined) ?? null;
 }
 export function sessionClearPriv(): void {
   const p = (window as any)[PRIV_HANDLE] as Uint8Array | undefined;
   if (p) p.fill(0);
   (window as any)[PRIV_HANDLE] = null;
-  try { priv_storage()?.removeItem(PRIV_STORAGE_KEY); } catch { /* ignore */ }
+  // Clear the IDB cache too — losing the wrapped blob is the right
+  // behaviour on explicit logout; re-login will re-cache it.
+  void clearCachedWrap();
+}
+
+/**
+ * Persist enough state to unlock the priv from a passkey on next load,
+ * without needing a fresh login. Call right after a successful login or
+ * recovery — both already have the wrap + the credential id we need.
+ */
+export async function rememberWrap(opts: {
+  wrapped_blob_b64: string;
+  wrap_salt_b64: string | null;
+  credential_id_b64: string;
+  rp_id: string;
+  prf_salt_b64: string;
+}): Promise<void> {
+  try { await putCachedWrap(opts); } catch { /* ignore; unlock will fall back to login */ }
+}
+
+/**
+ * Re-derive the priv key on a fresh tab / cold reload. Runs one passkey
+ * PRF ceremony against the cached credential id; returns the priv or
+ * throws if no cache or the user cancels. Must be called from a user
+ * gesture (Touch ID requires it).
+ */
+export async function unlock(): Promise<Uint8Array> {
+  const cached = await getCachedWrap();
+  if (!cached) throw new Error('no cached credential — sign in first');
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const prfSalt = b64uDecode(cached.prf_salt_b64);
+  const publicKey: PublicKeyCredentialRequestOptions = {
+    challenge,
+    rpId: cached.rp_id,
+    allowCredentials: [
+      {
+        id: b64uDecode(cached.credential_id_b64),
+        type: 'public-key',
+      },
+    ],
+    userVerification: 'preferred',
+    extensions: { prf: { eval: { first: prfSalt } } } as AuthenticationExtensionsClientInputs,
+  };
+  const assertion = (await navigator.credentials.get({
+    publicKey,
+    mediation: 'optional',
+  })) as PublicKeyCredential | null;
+  if (!assertion) throw new Error('unlock cancelled');
+  const ext = assertion.getClientExtensionResults() as any;
+  const prfFirst: ArrayBuffer | undefined = ext?.prf?.results?.first;
+  if (!prfFirst) throw new PrfUnsupportedError();
+  const wrapKey = await deriveWrapKey(prfFirst);
+  const priv = await unwrapPrivKey(b64uDecode(cached.wrapped_blob_b64), wrapKey);
+  await sessionStashPriv(priv);
+  return priv;
 }
 
 // -- Wire types -------------------------------------------------------------

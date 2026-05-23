@@ -16,7 +16,7 @@ import { marked } from 'marked';
 import * as api from '@/lib/api';
 import { b64uDecode, openSealedString } from '@/lib/crypto';
 import * as realtime from '@/lib/realtime';
-import { sessionPriv } from '@/lib/webauthn';
+import { sessionPriv, unlock } from '@/lib/webauthn';
 import { absoluteDate, relativeDate } from '@/lib/time';
 
 interface AttachmentRow {
@@ -236,13 +236,32 @@ export default function Thread() {
   if (!priv) {
     return (
       <EmptyState
-        title="session expired"
+        title="vault locked"
         hint={
           <>
-            your private key is held only in memory and was cleared when the
-            tab reloaded. <Link to="/login" className="underline">sign in again</Link>{' '}
-            to decrypt this thread.
+            decrypt this thread by unlocking with your passkey. your
+            private key is held only in memory; unlocking re-derives it
+            from your authenticator without a full sign-in.
           </>
+        }
+        action={
+          <button
+            type="button"
+            className="btn btn-primary label"
+            onClick={async () => {
+              try {
+                await unlock();
+                // Force a re-render by re-fetching messages.
+                setMsgs(null);
+                const data = await api.get<api.MessageRow[]>(`/api/threads/${id}`);
+                setMsgs(data);
+              } catch (e: any) {
+                setErr(e?.message || 'unlock failed');
+              }
+            }}
+          >
+            unlock with passkey ▸
+          </button>
         }
       />
     );

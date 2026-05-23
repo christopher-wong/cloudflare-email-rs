@@ -24,6 +24,7 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useApp } from '@/lib/store';
 import { isEditableTarget, isModK, hasMod } from '@/lib/shortcuts';
+import { sessionPriv, unlock } from '@/lib/webauthn';
 import CommandPalette, { type PaletteAction } from '@/components/CommandPalette';
 import ShortcutHelp from '@/components/ShortcutHelp';
 
@@ -198,7 +199,8 @@ export default function Chrome() {
   }, [state.me?.is_admin]);
 
   return (
-    <div className="grid h-full" style={{ gridTemplateRows: 'auto 1fr' }}>
+    <div className="grid h-full" style={{ gridTemplateRows: 'auto auto 1fr' }}>
+      <UnlockBanner />
       <header className="hair-b sticky top-0 z-30 flex items-center justify-between gap-2 bg-white px-2 py-2 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <button
@@ -314,5 +316,59 @@ function Hamburger({ open }: { open: boolean }) {
       <rect x="1" y="7" width="14" height="2" fill="currentColor" />
       <rect x="1" y="12" width="14" height="2" fill="currentColor" />
     </svg>
+  );
+}
+
+/**
+ * Sits above the main header. Visible only when the user is signed in
+ * (state.me populated) but sessionPriv is null — i.e. cookies survived
+ * but the in-memory priv was lost (cold reload, new tab). One click +
+ * Touch ID unlocks the vault without a full sign-in.
+ */
+function UnlockBanner() {
+  const { state } = useApp();
+  // Force re-evaluation on focus + storage events so the banner clears
+  // as soon as some other tab unlocks (event-driven) or a navigation
+  // re-renders Chrome.
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const onFocus = () => setTick((t) => t + 1);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // Re-read each render so we always reflect the current state.
+  void tick;
+  if (!state.me || sessionPriv()) return null;
+  return (
+    <div className="hair-b sticky top-0 z-40 flex items-center justify-between gap-3 bg-white px-3 py-2 text-sm">
+      <div>
+        <span className="font-bold">vault locked</span>
+        <span className="text-mute ml-2 text-xs">
+          unlock with your passkey to decrypt subjects, snippets, and message bodies.
+        </span>
+        {err && <span className="ml-2 text-xs text-red-600">{err}</span>}
+      </div>
+      <button
+        type="button"
+        className="btn btn-primary label"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setErr(null);
+          try {
+            await unlock();
+            setTick((t) => t + 1);
+          } catch (e: any) {
+            setErr(e?.message || 'unlock failed');
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? 'unlocking…' : 'unlock ▸'}
+      </button>
+    </div>
   );
 }

@@ -1,21 +1,21 @@
 /**
  * The webauthn library is mostly thin wrappers around `navigator.credentials`
  * — not useful to test that, the browser owns it. What IS our logic is the
- * priv-key stash / load lifecycle: it controls how the in-memory + on-disk
- * copies stay coherent, which is the bit that broke when we moved between
- * sessionStorage and localStorage.
+ * priv-key stash / clear lifecycle: it controls how the in-memory copy stays
+ * coherent. As of the Proton-style refactor, the priv is held in memory only;
+ * the *wrapped* priv lives in IndexedDB and is unwrapped via a passkey PRF
+ * ceremony in `unlock()` (separately tested via mocks where useful).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sessionStashPriv, sessionPriv, sessionClearPriv } from './webauthn';
 
 beforeEach(() => {
   sessionClearPriv();
-  try { window.localStorage.clear(); } catch { /* jsdom may not have it */ }
-  // Also wipe the in-memory side-channel
+  // Wipe the in-memory side-channel just in case a previous test stashed.
   (window as any)['__cfemail_priv_session__'] = null;
 });
 
-describe('priv key persistence', () => {
+describe('priv key (memory-only) lifecycle', () => {
   it('returns null when nothing has been stashed', () => {
     expect(sessionPriv()).toBeNull();
   });
@@ -28,22 +28,22 @@ describe('priv key persistence', () => {
     expect(Array.from(got!)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
-  it('rehydrates the in-memory copy from localStorage on a cold read', async () => {
+  it('does NOT survive a synthetic "cold read" (simulated reload)', async () => {
+    // Memory-only by design: blowing away the in-memory copy without
+    // calling unlock() must return null. Cold-tab UX is restored via
+    // the IDB-cached wrapped blob + passkey PRF in unlock(), not by
+    // re-reading from disk here.
     const priv = new Uint8Array([9, 9, 9]);
     await sessionStashPriv(priv);
-    // Simulate a reload — wipe the in-memory side, keep localStorage.
     (window as any)['__cfemail_priv_session__'] = null;
-    const got = sessionPriv();
-    expect(got).not.toBeNull();
-    expect(Array.from(got!)).toEqual([9, 9, 9]);
+    expect(sessionPriv()).toBeNull();
   });
 
-  it('clears both the in-memory and on-disk copies on logout', async () => {
+  it('clears the in-memory copy on logout', async () => {
     const priv = new Uint8Array([1]);
     await sessionStashPriv(priv);
     sessionClearPriv();
     expect(sessionPriv()).toBeNull();
-    expect(window.localStorage.getItem('cfemail.priv.b64')).toBeNull();
   });
 
   it('zeroes the in-memory bytes on clear (defense-in-depth)', async () => {
