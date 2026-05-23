@@ -160,22 +160,41 @@ on first deploy.
 
 ### 4. Enable Email Service on the domain
 
-```bash
-# Adds SPF/DKIM DNS records on your zone.
-npx wrangler email sending enable yourdomain.com
+**Outbound (Email Sending)** — adds SPF/DKIM DNS records on your zone:
 
-# Inbound: route everything @ your domain to this worker.
-npx wrangler email routing enable yourdomain.com
-npx wrangler email routing rules update yourdomain.com catch-all \
-  --action-type worker \
-  --action-value cfemail
+```bash
+npx wrangler email sending enable yourdomain.com
 ```
 
-The catch-all rule always exists for an Email-Routing-enabled zone, so you
-**update** it rather than create it. The worker must already be deployed
-(step 5 below) before this command will accept `cfemail` as the action
-target — on a fresh install, run step 5 first, then come back for the
-`rules update`.
+**Inbound (Email Routing)** — enable routing, then point the catch-all
+at the worker. **The catch-all must be set in the Cloudflare dashboard,
+not via wrangler** (see the note below).
+
+```bash
+# Provisions MX records on yourdomain.com.
+npx wrangler email routing enable yourdomain.com
+```
+
+Now open
+`https://dash.cloudflare.com/?to=/:account/yourdomain.com/email`
+→ **Email Routing** → **Routing rules** → **Catch-all address** →
+**Edit**, then:
+
+- Action: **Send to a Worker**
+- Worker: `cfemail`
+- Save, and make sure the catch-all is **enabled**
+
+(The worker must already be deployed for the dashboard to offer `cfemail`
+as a target. On a fresh install, run step 5 first, then come back here.)
+
+> **Why the dashboard?** The wrangler CLI today refuses to set a catch-all
+> rule with a worker action (`Catch-all rule only supports 'forward' or
+> 'drop' action types`), and `rules create --match-type all` is rejected
+> by the API because the CLI insists on sending match-field/match-value.
+> The dashboard and the raw REST API both accept `catch-all → worker`
+> fine — it's a CLI gap, tracked upstream. Once `wrangler` ships the fix,
+> this step collapses back to a one-line `rules update … --action-type
+> worker --action-value cfemail`.
 
 ### 5. Deploy
 
