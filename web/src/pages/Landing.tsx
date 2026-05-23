@@ -4,7 +4,7 @@ export default function Landing() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
       <header className="hair-b flex items-center justify-between pb-4">
-        <div className="label">CFEMAIL</div>
+        <div className="label">BMAIL</div>
         <nav className="flex items-center gap-3">
           <a
             href="https://github.com/"
@@ -109,7 +109,7 @@ export default function Landing() {
       </section>
 
       <footer className="flex items-center justify-between py-6 text-xs">
-        <span className="label">CFEMAIL // OPEN SOURCE</span>
+        <span className="label">BMAIL // OPEN SOURCE</span>
         <span className="text-mute">brutalist by choice.</span>
       </footer>
     </div>

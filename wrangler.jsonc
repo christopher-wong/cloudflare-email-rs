@@ -28,7 +28,7 @@
 		// the expected origin in passkey ceremonies. May differ from the email
 		// domain (e.g. mail.middleseat.vc serving christopher@middleseat.vc).
 		"APP_HOST": "mail.middleseat.vc",
-		"APP_NAME": "cfemail",
+		"APP_NAME": "bmail",
 		"SESSION_TTL_DAYS": "30"
 	},
 	"routes": [

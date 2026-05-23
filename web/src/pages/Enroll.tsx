@@ -62,7 +62,7 @@ export default function Enroll() {
       {!phrase && (
         <>
           <header>
-            <div className="label">CFEMAIL · enroll</div>
+            <div className="label">BMAIL · enroll</div>
             <h1 className="mt-1 text-2xl font-bold">Register your passkey</h1>
             <p className="text-mute mt-2 text-sm">
               Your passkey unlocks your mailbox. We use its PRF extension to
@@ -110,7 +110,7 @@ export default function Enroll() {
       {phrase && (
         <>
           <header>
-            <div className="label">CFEMAIL · enroll · step 2 of 2</div>
+            <div className="label">BMAIL · enroll · step 2 of 2</div>
             <h1 className="mt-1 text-2xl font-bold">Save your recovery phrase</h1>
           </header>
           <RecoveryReveal phrase={phrase} onContinue={finish} />

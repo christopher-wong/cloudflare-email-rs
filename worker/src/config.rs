@@ -25,7 +25,7 @@ impl AppConfig {
             .filter(|s| !s.is_empty())
             .collect();
         let app_host = var(env, "APP_HOST").unwrap_or_else(|| primary_domain.clone());
-        let app_name = var(env, "APP_NAME").unwrap_or_else(|| "cfemail".to_string());
+        let app_name = var(env, "APP_NAME").unwrap_or_else(|| "bmail".to_string());
         let session_ttl_days = var(env, "SESSION_TTL_DAYS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(30);
@@ -137,7 +137,7 @@ mod tests {
             primary_domain: primary.to_string(),
             additional_domains: additional.iter().map(|s| s.to_string()).collect(),
             app_host: primary.to_string(),
-            app_name: "cfemail".to_string(),
+            app_name: "bmail".to_string(),
             session_ttl_days: 30,
         }
     }

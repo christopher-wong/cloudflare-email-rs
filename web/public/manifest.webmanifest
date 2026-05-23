@@ -1,6 +1,6 @@
 {
-  "name": "cfemail",
-  "short_name": "cfemail",
+  "name": "bmail",
+  "short_name": "bmail",
   "description": "Email on Cloudflare — passkey auth, E2E body encryption.",
   "start_url": "/",
   "scope": "/",

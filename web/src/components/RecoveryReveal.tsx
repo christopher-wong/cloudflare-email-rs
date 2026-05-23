@@ -25,7 +25,7 @@ export default function RecoveryReveal({
   const download = () => {
     const blob = new Blob(
       [
-        `cfemail recovery phrase — keep this safe.\n`,
+        `bmail recovery phrase — keep this safe.\n`,
         `${new Date().toISOString()}\n\n`,
         phrase + '\n',
       ],
@@ -34,7 +34,7 @@ export default function RecoveryReveal({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'cfemail-recovery.txt';
+    a.download = 'bmail-recovery.txt';
     a.click();
     URL.revokeObjectURL(url);
   };

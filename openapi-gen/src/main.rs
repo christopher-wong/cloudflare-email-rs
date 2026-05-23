@@ -20,7 +20,7 @@ use schemas as s;
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "cfemail HTTP API",
+        title = "bmail HTTP API",
         version = env!("CARGO_PKG_VERSION"),
         description = "End-to-end encrypted email backed by Cloudflare Workers + Durable Objects. \
                        All `/api/*` routes are served by the Rust worker in `worker/src/router.rs`.",

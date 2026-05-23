@@ -1,4 +1,4 @@
-# cfemail
+# bmail
 
 A minimalist, server-blind email web app on Cloudflare. Passkey auth with
 the WebAuthn **PRF extension**, X25519 sealed-box at-rest encryption,
@@ -6,6 +6,11 @@ multi-user with per-user mailbox isolation via Durable Objects, plus-addressing,
 and a flat black-and-white UI.
 
 Open source, self-hostable, configurable for any domain.
+
+> The internal worker name, R2 bucket name, and a handful of crypto
+> domain-separation strings remain `cfemail*` for compatibility with
+> existing deployments — they're not user-visible. Rebranding only
+> touches display strings, the `APP_NAME` env var, and docs.
 
 ## What's in the box
 

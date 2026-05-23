@@ -218,7 +218,7 @@ export default function Chrome() {
           >
             <Hamburger open={mobileOpen} />
           </button>
-          <span className="font-bold tracking-widest">CFEMAIL</span>
+          <span className="font-bold tracking-widest">BMAIL</span>
           <span className="text-mute hidden sm:inline">·</span>
           <span className="hidden truncate text-sm sm:inline">
             {state.me?.addresses[0] ?? state.me?.handle}

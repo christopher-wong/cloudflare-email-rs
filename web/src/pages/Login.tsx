@@ -50,7 +50,7 @@ export default function Login() {
   return (
     <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center gap-6 p-8">
       <div className="text-center">
-        <div className="label">CFEMAIL</div>
+        <div className="label">BMAIL</div>
         <h1 className="mt-2 text-3xl font-bold tracking-wider">enter</h1>
       </div>
 

@@ -40,7 +40,7 @@ export default function Bootstrap() {
   return (
     <div className="mx-auto flex h-full max-w-xl flex-col gap-6 p-8">
       <header>
-        <div className="label">CFEMAIL · bootstrap</div>
+        <div className="label">BMAIL · bootstrap</div>
         <h1 className="mt-1 text-2xl font-bold">First user</h1>
         <p className="text-mute mt-2 text-sm">
           No users exist yet on this instance. Create the first one — they will
