@@ -199,7 +199,7 @@ export default function Chrome() {
 
   return (
     <div className="grid h-full" style={{ gridTemplateRows: 'auto 1fr' }}>
-      <header className="hair-b flex items-center justify-between gap-2 px-2 py-2 sm:px-4">
+      <header className="hair-b sticky top-0 z-30 flex items-center justify-between gap-2 bg-white px-2 py-2 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <button
             type="button"
