@@ -285,7 +285,7 @@ export default function Chrome() {
           ))}
         </nav>
 
-        <main className="overflow-y-auto">
+        <main className="min-w-0 overflow-y-auto overflow-x-hidden">
           <UnlockGate>
             <Outlet />
           </UnlockGate>

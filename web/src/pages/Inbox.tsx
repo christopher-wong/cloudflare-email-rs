@@ -249,27 +249,31 @@ export default function Inbox() {
               </button>
             </>
           ) : (
-            <Link to="/compose" className="btn btn-primary label">
-              compose ▸
+            <Link
+              to="/compose"
+              className="btn btn-primary label inline-flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <span>compose</span>
+              <span aria-hidden="true">▸</span>
             </Link>
           )
         }
       >
-        <span className="label">inbox</span>
-        <span className="text-mute hidden text-xs sm:inline">
-          {state.me?.addresses.join(', ')}
-        </span>
+        <span className="label shrink-0">inbox</span>
+        {/* Search input — flexes to fill remaining space, capped so it doesn't
+            dominate at desktop widths. On narrow screens (<sm) it shrinks to
+            its content + a small minimum via `min-w-0`. */}
         <input
           ref={searchRef}
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="search… (press / to focus)"
-          className="ml-2 w-32 px-2 py-1 text-xs sm:w-64"
+          placeholder="search…"
+          className="ml-2 min-w-0 flex-1 px-2 py-1 text-xs sm:max-w-64"
           aria-label="search inbox"
         />
         <select
-          className="ml-1 px-2 py-1 text-xs"
+          className="ml-1 shrink-0 px-2 py-1 text-xs"
           value={labelFilter}
           onChange={(e) => setLabelFilter(e.target.value)}
           aria-label="filter by label"
