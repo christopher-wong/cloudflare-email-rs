@@ -36,6 +36,16 @@ pub fn decode_blob(v: &serde_json::Value) -> Option<Vec<u8>> {
 }
 
 /// SELECT every row in the table; each row becomes a JSON object.
+///
+/// **Only safe for tables with no BLOB columns.** When workers-rs delivers
+/// a SQLite BLOB to a `serde_json::Value`-typed cursor, deserialization
+/// panics with `invalid type: byte array, expected any valid JSON value`
+/// because `serde_json::Value`'s visitor has no `visit_bytes`. If the
+/// table — including future ALTER TABLE additions — could ever contain
+/// a BLOB column, use `dump_blob_table` instead and list the blob
+/// columns explicitly. The convention has burned us multiple times
+/// (see CLAUDE.md "serde + bytes"), so prefer `dump_blob_table` by
+/// default and only use this helper when the schema is 100% text/int.
 pub fn dump_table(sql: &SqlStorage, query: &str) -> Result<Vec<serde_json::Value>> {
     Ok(sql.exec(query, None)?.to_array()?)
 }

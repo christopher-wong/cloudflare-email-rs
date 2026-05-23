@@ -981,7 +981,7 @@ impl RegistryDO {
         use crate::backup::{dump_blob_table, dump_table};
         let sql = self.sql();
         let dump = serde_json::json!({
-            "users":       dump_table(&sql, "SELECT * FROM users")?,
+            "users":       dump_blob_table(&sql, "SELECT id, handle, display_name, is_admin, pub_key, created_at FROM users", &["pub_key"])?,
             "credentials": dump_blob_table(&sql, "SELECT id, user_id, cose_pubkey, sign_count, aaguid, transports, created_at, label FROM credentials", &["id", "cose_pubkey", "aaguid"])?,
             "addresses":   dump_table(&sql, "SELECT * FROM addresses")?,
             "invites":     dump_table(&sql, "SELECT * FROM invites")?,
