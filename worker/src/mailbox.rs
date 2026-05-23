@@ -311,8 +311,11 @@ impl MailboxDO {
             direction: String,
             read: i64,
             starred: i64,
+            #[serde(with = "serde_bytes", default)]
             snippet_ct: Option<Vec<u8>>,
+            #[serde(with = "serde_bytes")]
             subject_ct: Vec<u8>,
+            #[serde(with = "serde_bytes")]
             body_ct: Vec<u8>,
             size_bytes: i64,
         }
@@ -519,7 +522,9 @@ impl MailboxDO {
             to_addrs: Option<String>,
             cc_addrs: Option<String>,
             bcc_addrs: Option<String>,
+            #[serde(with = "serde_bytes", default)]
             subject_ct: Option<Vec<u8>>,
+            #[serde(with = "serde_bytes", default)]
             body_ct: Option<Vec<u8>>,
             attachments: Option<String>,
             updated_at: i64,
@@ -686,6 +691,7 @@ impl MailboxDO {
             message_id: Option<String>,
             draft_id: Option<String>,
             r2_key: String,
+            #[serde(with = "serde_bytes", default)]
             filename_ct: Option<Vec<u8>>,
             mime: String,
             size_bytes: i64,

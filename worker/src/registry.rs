@@ -225,6 +225,7 @@ impl RegistryDO {
         let body: ConsumeChallengeReq = req.json().await?;
         #[derive(Deserialize)]
         struct Row {
+            #[serde(with = "serde_bytes")]
             value: Vec<u8>,
             purpose: String,
             user_id: Option<String>,
@@ -421,6 +422,7 @@ impl RegistryDO {
         #[derive(Deserialize)]
         struct Row {
             user_id: String,
+            #[serde(with = "serde_bytes")]
             cose_pubkey: Vec<u8>,
             sign_count: i64,
         }
@@ -642,6 +644,7 @@ impl RegistryDO {
             handle: String,
             display_name: Option<String>,
             is_admin: i64,
+            #[serde(with = "serde_bytes", default)]
             pub_key: Option<Vec<u8>>,
         }
         let rows: Vec<Row> = sql
@@ -757,8 +760,11 @@ impl RegistryDO {
         struct Row {
             id: String,
             kind: String,
+            #[serde(with = "serde_bytes", default)]
             credential_id: Option<Vec<u8>>,
+            #[serde(with = "serde_bytes")]
             wrapped_blob: Vec<u8>,
+            #[serde(with = "serde_bytes", default)]
             wrap_salt: Option<Vec<u8>>,
             kdf_params: Option<String>,
             label: Option<String>,
@@ -805,9 +811,11 @@ impl RegistryDO {
             .ok_or_else(|| Error::RustError("user_id required".into()))?;
         #[derive(Deserialize)]
         struct Row {
+            #[serde(with = "serde_bytes")]
             id: Vec<u8>,
             label: Option<String>,
             created_at: i64,
+            #[serde(with = "serde_bytes", default)]
             aaguid: Option<Vec<u8>>,
             transports: Option<String>,
         }

@@ -17,7 +17,7 @@ import Settings from '@/pages/Settings';
 import Admin from '@/pages/Admin';
 import NotFound from '@/pages/NotFound';
 
-import { AppContext, useAppProvider } from '@/lib/store';
+import { AppContext, useApp, useAppProvider } from '@/lib/store';
 
 export default function App() {
   const ctx = useAppProvider();
@@ -29,7 +29,7 @@ export default function App() {
 }
 
 function Router() {
-  const { state } = useAppProvider();
+  const { state } = useApp();
   const location = useLocation();
   const nav = useNavigate();
 
@@ -69,7 +69,7 @@ function Router() {
 }
 
 function Authed() {
-  const { state } = useAppProvider();
+  const { state } = useApp();
   if (!state.me) return <Navigate to="/login" replace />;
   // Just render the nested routes; Chrome is the layout.
   // (React Router treats this <Authed/> as a layout route so children render
