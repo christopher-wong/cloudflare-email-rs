@@ -413,13 +413,15 @@ project's `wrangler.jsonc` `build.command`.
 Required repository secrets (Settings → Secrets and variables →
 Actions):
 
-- `CLOUDFLARE_API_TOKEN` — a token with these permissions on the
-  account that owns the worker: `Workers Scripts:Edit`,
-  `Account Settings:Read`, `D1:Edit` (unused but the template asks),
-  `Workers R2 Storage:Edit`, `Workers KV Storage:Edit`,
-  `Email Routing Addresses:Edit`.
+- `CLOUDFLARE_API_TOKEN` — easiest path is the built-in **"Edit
+  Cloudflare Workers"** template in the Cloudflare dashboard
+  (Profile → API Tokens → Create Token). When the template asks for
+  scopes, grant the **account** that owns this worker and include
+  the **zone** for the custom domain (e.g. `middleseat.vc`) — the
+  Workers Routes:Edit scope on that zone is what lets wrangler
+  attach `mail.middleseat.vc` to the new version.
 - `CLOUDFLARE_ACCOUNT_ID` — visible in the Cloudflare dashboard
-  sidebar.
+  sidebar of any Workers page.
 
 The deploy job is single-concurrent on master so two pushes never race
 to a write a Durable Object. PR check jobs cancel on superseding push.
