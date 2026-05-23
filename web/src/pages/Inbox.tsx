@@ -19,7 +19,7 @@ export default function Inbox() {
     let cancelled = false;
     (async () => {
       try {
-        const t = await api.get<api.ThreadRow[]>('/api/threads?limit=100');
+        const t = await api.get<api.ThreadRow[]>('/api/threads?limit=100&inbound_only=1');
         if (!cancelled) setThreads(t);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message || 'load failed');

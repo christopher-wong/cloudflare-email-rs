@@ -6,7 +6,7 @@ export default function EmptyState({
   action,
 }: {
   title: string;
-  hint?: string;
+  hint?: ReactNode;
   action?: ReactNode;
 }) {
   return (

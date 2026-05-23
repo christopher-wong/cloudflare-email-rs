@@ -210,6 +210,13 @@ impl MailboxDO {
             .find(|(k, _)| k == "archived")
             .map(|(_, v)| v == "1")
             .unwrap_or(false);
+        // Inbox view: only threads with at least one inbound message. The Sent
+        // view fetches messages directly, so this filter is inbox-specific.
+        let inbound_only: bool = url
+            .query_pairs()
+            .find(|(k, _)| k == "inbound_only")
+            .map(|(_, v)| v == "1")
+            .unwrap_or(false);
 
         #[derive(Deserialize)]
         struct Row {
@@ -222,22 +229,33 @@ impl MailboxDO {
             has_starred: i64,
             archived: i64,
         }
+        let inbound_clause = if inbound_only {
+            " AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = threads.id AND m.direction = 'in')"
+        } else {
+            ""
+        };
         let rows: Vec<Row> = if let Some(b) = before {
-            self.sql().exec(
+            let sql_text = format!(
                 "SELECT id, subject_hint, participants, last_message_at,
                     message_count, unread_count, has_starred, archived
                  FROM threads
-                 WHERE archived = ? AND last_message_at < ?
-                 ORDER BY last_message_at DESC LIMIT ?",
+                 WHERE archived = ? AND last_message_at < ?{inbound_clause}
+                 ORDER BY last_message_at DESC LIMIT ?"
+            );
+            self.sql().exec(
+                &sql_text,
                 Some(vec![(archived as i64).into(), b.into(), limit.into()]),
             )?
         } else {
-            self.sql().exec(
+            let sql_text = format!(
                 "SELECT id, subject_hint, participants, last_message_at,
                     message_count, unread_count, has_starred, archived
                  FROM threads
-                 WHERE archived = ?
-                 ORDER BY last_message_at DESC LIMIT ?",
+                 WHERE archived = ?{inbound_clause}
+                 ORDER BY last_message_at DESC LIMIT ?"
+            );
+            self.sql().exec(
+                &sql_text,
                 Some(vec![(archived as i64).into(), limit.into()]),
             )?
         }

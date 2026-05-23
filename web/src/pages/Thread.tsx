@@ -50,9 +50,9 @@ export default function Thread() {
     return () => { cancelled = true; };
   }, [id]);
 
+  const priv = sessionPriv();
   const decoded = useMemo<Decoded[] | null>(() => {
     if (!msgs) return null;
-    const priv = sessionPriv();
     if (!priv) return [];
     return msgs.map((row) => {
       let subject = '';
@@ -70,6 +70,20 @@ export default function Thread() {
   if (err) return <EmptyState title={err} />;
   if (!msgs || !decoded) return <Loader />;
   if (msgs.length === 0) return <EmptyState title="thread not found" />;
+  if (!priv) {
+    return (
+      <EmptyState
+        title="session expired"
+        hint={
+          <>
+            your private key is held only in memory and was cleared when the
+            tab reloaded. <Link to="/login" className="underline">sign in again</Link>{' '}
+            to decrypt this thread.
+          </>
+        }
+      />
+    );
+  }
 
   const subject = decoded[0]?.subject || '';
   const last = msgs[msgs.length - 1];
