@@ -21,8 +21,11 @@
  */
 
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useApp } from '@/lib/store';
+import { isEditableTarget, isModK, hasMod } from '@/lib/shortcuts';
+import CommandPalette, { type PaletteAction } from '@/components/CommandPalette';
+import ShortcutHelp from '@/components/ShortcutHelp';
 
 interface NavItem {
   to: string;
@@ -63,6 +66,8 @@ export default function Chrome() {
   // as drawer dismissal.
   const [desktopOpen, setDesktopOpen] = useState<boolean>(loadSidebarPref);
   const [mobileOpen, setMobileOpen] = useState<boolean>(false);
+  const [paletteOpen, setPaletteOpen] = useState<boolean>(false);
+  const [helpOpen, setHelpOpen] = useState<boolean>(false);
 
   useEffect(() => {
     try {
@@ -104,6 +109,94 @@ export default function Chrome() {
 
   const items = NAV.filter((n) => !n.adminOnly || state.me?.is_admin);
 
+  // Global keyboard shortcuts. The handler is intentionally a single
+  // useEffect so all the bookkeeping (g-prefix state, "in editable" gate,
+  // modal gate) lives in one place. A ref holds the prefix because we
+  // don't want every keystroke to re-render Chrome.
+  const gPrefixRef = useRef<{ until: number } | null>(null);
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      // Cmd/Ctrl-K always wins — even from inside a text field, it should
+      // pop the palette. The palette's own input field handles Esc/Enter
+      // internally once it's open.
+      if (isModK(e)) {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+
+      // Everything else is suppressed while a modal is open (the modal
+      // owns the keyboard) or while the user is typing somewhere.
+      if (paletteOpen || helpOpen) return;
+      if (isEditableTarget(e.target)) return;
+
+      // Sequence shortcuts: g followed by another letter within 1s. The
+      // prefix expires automatically.
+      const now = Date.now();
+      const prefix = gPrefixRef.current;
+      if (prefix && now < prefix.until) {
+        gPrefixRef.current = null;
+        if (hasMod(e)) return;
+        switch (e.key) {
+          case 'i': e.preventDefault(); nav('/'); return;
+          case 'd': e.preventDefault(); nav('/drafts'); return;
+          case 's': e.preventDefault(); nav('/sent'); return;
+          case 'l': e.preventDefault(); nav('/labels'); return;
+          case ',': e.preventDefault(); nav('/settings'); return;
+          // Unknown follow-up: fall through and let the key behave normally.
+        }
+      }
+
+      if (hasMod(e)) return; // single-letter shortcuts only fire bare
+
+      switch (e.key) {
+        case '?':
+          e.preventDefault();
+          setHelpOpen(true);
+          return;
+        case 'c':
+          e.preventDefault();
+          nav('/compose');
+          return;
+        case '[':
+          e.preventDefault();
+          onToggleSidebar();
+          return;
+        case 'g':
+          e.preventDefault();
+          gPrefixRef.current = { until: now + 1000 };
+          return;
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paletteOpen, helpOpen]);
+
+  const paletteActions = useMemo<PaletteAction[]>(() => {
+    const acts: PaletteAction[] = [
+      { id: 'compose', label: 'compose new email', hint: 'c', keywords: ['new', 'write', 'mail'], run: () => nav('/compose') },
+      { id: 'go-inbox', label: 'go to inbox', hint: 'g i', keywords: ['inbox', 'mail'], run: () => nav('/') },
+      { id: 'go-drafts', label: 'go to drafts', hint: 'g d', keywords: ['drafts'], run: () => nav('/drafts') },
+      { id: 'go-sent', label: 'go to sent', hint: 'g s', keywords: ['sent'], run: () => nav('/sent') },
+      { id: 'go-labels', label: 'go to labels', hint: 'g l', keywords: ['labels', 'tags'], run: () => nav('/labels') },
+      { id: 'go-settings', label: 'go to settings', hint: 'g ,', keywords: ['settings', 'preferences'], run: () => nav('/settings') },
+      { id: 'toggle-sidebar', label: 'toggle sidebar', hint: '[', keywords: ['nav', 'menu', 'collapse'], run: onToggleSidebar },
+      { id: 'shortcuts', label: 'show keyboard shortcuts', hint: '?', keywords: ['help', 'keys'], run: () => setHelpOpen(true) },
+      { id: 'logout', label: 'log out', keywords: ['signout', 'exit'], run: () => { void onLogout(); } },
+    ];
+    if (state.me?.is_admin) {
+      acts.splice(6, 0, {
+        id: 'go-admin',
+        label: 'go to admin',
+        keywords: ['admin'],
+        run: () => nav('/admin'),
+      });
+    }
+    return acts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.me?.is_admin]);
+
   return (
     <div className="grid h-full" style={{ gridTemplateRows: 'auto 1fr' }}>
       <header className="hair-b flex items-center justify-between gap-2 px-2 py-2 sm:px-4">
@@ -127,7 +220,16 @@ export default function Chrome() {
             <span className="chip chip-inv hidden sm:inline-flex">ADMIN</span>
           )}
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            className="btn-ghost btn label hidden items-center gap-2 sm:inline-flex"
+            onClick={() => setPaletteOpen(true)}
+            title="open command palette"
+          >
+            <span>cmd</span>
+            <span className="kbd">⌘K</span>
+          </button>
           <button className="btn-ghost btn label" onClick={onLogout}>
             log out
           </button>
@@ -184,6 +286,13 @@ export default function Chrome() {
           <Outlet />
         </main>
       </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        actions={paletteActions}
+      />
+      <ShortcutHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import Toolbar from '@/components/Toolbar';
@@ -11,10 +11,13 @@ import { sessionPriv } from '@/lib/webauthn';
 import * as realtime from '@/lib/realtime';
 import { relativeDate } from '@/lib/time';
 import { useApp } from '@/lib/store';
+import { isEditableTarget, hasMod } from '@/lib/shortcuts';
 
 export default function Inbox() {
   const [threads, setThreads] = useState<api.ThreadRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [selectedIdx, setSelectedIdx] = useState<number>(-1);
+  const rowRefs = useRef<Array<HTMLLIElement | null>>([]);
   const { state } = useApp();
   const nav = useNavigate();
 
@@ -82,6 +85,38 @@ export default function Inbox() {
     [state.me?.addresses],
   );
 
+  // j/k row navigation. The selected row scrolls into view, and Enter opens
+  // the thread. The handler bails out when focus is in an editable element
+  // so it doesn't fight with the global Chrome shortcuts.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      if (hasMod(e)) return;
+      if (!threads || threads.length === 0) return;
+      if (e.key === 'j') {
+        e.preventDefault();
+        setSelectedIdx((i) => Math.min(threads.length - 1, i < 0 ? 0 : i + 1));
+      } else if (e.key === 'k') {
+        e.preventDefault();
+        setSelectedIdx((i) => Math.max(0, i < 0 ? 0 : i - 1));
+      } else if (e.key === 'Enter') {
+        if (selectedIdx >= 0 && selectedIdx < threads.length) {
+          e.preventDefault();
+          nav(`/thread/${threads[selectedIdx].id}`);
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [threads, selectedIdx, nav]);
+
+  // Keep the selected row visible. `nearest` avoids jumpy autoscroll while
+  // the user is moving slowly through a small list.
+  useEffect(() => {
+    if (selectedIdx < 0) return;
+    rowRefs.current[selectedIdx]?.scrollIntoView({ block: 'nearest' });
+  }, [selectedIdx]);
+
   const labelFor = (t: api.ThreadRow): string => {
     // For an inbound-first thread we show the sender; for an outbound-first
     // thread we show "to <other parties>". Falls back to all participants.
@@ -115,12 +150,18 @@ export default function Inbox() {
       )}
       {threads && threads.length > 0 && (
         <ul className="flex-1 overflow-y-auto">
-          {threads.map((t) => {
+          {threads.map((t, i) => {
             const subject = decryptedSubjects.get(t.id);
+            const isSelected = i === selectedIdx;
             return (
               <li
                 key={t.id}
-                className={'row ' + (t.unread_count > 0 ? 'unread' : '')}
+                ref={(el) => { rowRefs.current[i] = el; }}
+                className={
+                  'row ' +
+                  (t.unread_count > 0 ? 'unread ' : '') +
+                  (isSelected ? 'inv' : '')
+                }
                 onClick={() => nav(`/thread/${t.id}`)}
               >
                 <div className="truncate">{labelFor(t)}</div>
