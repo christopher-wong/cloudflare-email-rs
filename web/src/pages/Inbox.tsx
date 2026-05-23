@@ -17,18 +17,29 @@ export default function Inbox() {
   const { state } = useApp();
   const nav = useNavigate();
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const t = await api.get<api.ThreadRow[]>('/api/threads?limit=100&inbound_only=1');
-        if (!cancelled) setThreads(t);
-      } catch (e: any) {
-        if (!cancelled) setErr(e?.message || 'load failed');
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+  const load = async () => {
+    try {
+      const t = await api.get<api.ThreadRow[]>('/api/threads?limit=100&inbound_only=1');
+      setThreads(t);
+    } catch (e: any) {
+      setErr(e?.message || 'load failed');
+    }
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const deleteThread = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!confirm('delete this thread? messages and attachments will be removed.')) return;
+    // Optimistic update — drop the row immediately so the click feels fast.
+    setThreads((cur) => (cur ? cur.filter((t) => t.id !== id) : cur));
+    try {
+      await api.del(`/api/threads/${encodeURIComponent(id)}`);
+    } catch (err: any) {
+      setErr(err?.message || 'delete failed');
+      void load();
+    }
+  };
 
   // Decrypt the first-message subject for each row. Cheap (one HKDF + AEAD
   // per row), and the priv key stays in memory.
@@ -109,6 +120,14 @@ export default function Inbox() {
                 <div className="text-right text-xs">
                   {relativeDate(t.last_message_at)}
                 </div>
+                <button
+                  type="button"
+                  className="btn label ml-2"
+                  onClick={(e) => deleteThread(e, t.id)}
+                  title="delete thread"
+                >
+                  delete
+                </button>
               </li>
             );
           })}

@@ -44,6 +44,7 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
 
         ("GET", "/api/threads") => api::mail::list_threads(req, &env, &cfg).await,
         ("GET", p) if p.starts_with("/api/threads/") => api::mail::get_thread(req, &env, &cfg).await,
+        ("DELETE", p) if p.starts_with("/api/threads/") => api::mail::delete_thread(req, &env, &cfg).await,
         ("PATCH", p) if p.starts_with("/api/messages/") => api::mail::patch_message(req, &env, &cfg).await,
         ("DELETE", p) if p.starts_with("/api/messages/") => api::mail::delete_message(req, &env, &cfg).await,
         ("POST", "/api/messages/send") => api::mail::send(req, &env, &cfg).await,

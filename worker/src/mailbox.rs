@@ -25,6 +25,7 @@ impl DurableObject for MailboxDO {
             (Method::Post, "/messages") => self.insert_message(req).await,
             (Method::Get, "/threads") => self.list_threads(req).await,
             (Method::Get, "/threads/messages") => self.thread_messages(req).await,
+            (Method::Delete, "/threads") => self.delete_thread(req).await,
             (Method::Get, "/messages") => self.list_messages(req).await,
             (Method::Get, "/messages/get") => self.get_message(req).await,
             (Method::Patch, "/messages") => self.patch_message(req).await,
@@ -517,6 +518,71 @@ impl MailboxDO {
             }
         }
         Response::ok("{}")
+    }
+
+    /// Cascade-delete a thread: every message in the thread, every
+    /// attachment row, every message_labels row, plus the thread row itself.
+    /// Returns the list of R2 keys that the caller is responsible for
+    /// deleting (raw_r2_key + each attachment.r2_key). We don't delete from
+    /// R2 in here because the DO doesn't have an R2 binding; the worker
+    /// orchestrates it.
+    async fn delete_thread(&self, req: Request) -> Result<Response> {
+        let url = req.url()?;
+        let tid = url
+            .query_pairs()
+            .find(|(k, _)| k == "id")
+            .map(|(_, v)| v.to_string())
+            .ok_or_else(|| Error::RustError("id required".into()))?;
+        let sql = self.sql();
+
+        // Gather R2 keys that the worker should delete after this returns.
+        #[derive(Deserialize)]
+        struct RawRow { raw_r2_key: Option<String> }
+        let raw_keys: Vec<RawRow> = sql
+            .exec(
+                "SELECT raw_r2_key FROM messages WHERE thread_id = ?",
+                Some(vec![tid.clone().into()]),
+            )?
+            .to_array()?;
+        #[derive(Deserialize)]
+        struct AttRow { r2_key: String }
+        let att_keys: Vec<AttRow> = sql
+            .exec(
+                "SELECT a.r2_key
+                 FROM attachments a JOIN messages m ON a.message_id = m.id
+                 WHERE m.thread_id = ?",
+                Some(vec![tid.clone().into()]),
+            )?
+            .to_array()?;
+
+        // Cascade. Order matters: child rows first, then parents.
+        sql.exec(
+            "DELETE FROM attachments
+              WHERE message_id IN (SELECT id FROM messages WHERE thread_id = ?)",
+            Some(vec![tid.clone().into()]),
+        )?;
+        sql.exec(
+            "DELETE FROM message_labels
+              WHERE message_id IN (SELECT id FROM messages WHERE thread_id = ?)",
+            Some(vec![tid.clone().into()]),
+        )?;
+        sql.exec(
+            "DELETE FROM messages WHERE thread_id = ?",
+            Some(vec![tid.clone().into()]),
+        )?;
+        sql.exec(
+            "DELETE FROM threads WHERE id = ?",
+            Some(vec![tid.into()]),
+        )?;
+
+        #[derive(Serialize)]
+        struct Resp { r2_keys: Vec<String> }
+        let r2_keys: Vec<String> = raw_keys
+            .into_iter()
+            .filter_map(|r| r.raw_r2_key)
+            .chain(att_keys.into_iter().map(|a| a.r2_key))
+            .collect();
+        Response::from_json(&Resp { r2_keys })
     }
 
     async fn upsert_draft(&self, mut req: Request) -> Result<Response> {

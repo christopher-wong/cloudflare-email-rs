@@ -32,6 +32,36 @@ pub async fn get_thread(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiRes
     stub_passthrough(&stub, Method::Get, &path, None).await
 }
 
+/// Cascade-delete a thread: every message + attachment row in the DO, plus
+/// the R2 blobs they reference (raw .eml ciphertext + attachment ciphertext).
+pub async fn delete_thread(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<Response> {
+    let s = require_auth(&req, env).await?;
+    let stub = mailbox_stub(env, &s.user_id)?;
+    let tid = super::last_segment(&req)
+        .ok_or_else(|| ApiError::BadRequest("thread id".into()))?;
+    let path = format!("/threads?id={}", urlencoding::encode(&tid));
+
+    #[derive(Deserialize)]
+    struct DoResp { r2_keys: Vec<String> }
+    let resp: DoResp = stub_json(&stub, Method::Delete, &path, None).await?;
+
+    if !resp.r2_keys.is_empty() {
+        let r2 = env
+            .bucket("BLOBS")
+            .map_err(|e| ApiError::Internal(format!("R2: {e}")))?;
+        for key in &resp.r2_keys {
+            if let Err(e) = r2.delete(key).await {
+                // Best-effort: the DO row is already gone, so log and
+                // continue. A dangling blob is preferable to surfacing a
+                // partial-success error to the caller.
+                worker::console_log!("delete_thread.r2_orphan key={} err={}", key, e);
+            }
+        }
+    }
+
+    super::json_ok(&serde_json::json!({ "deleted_blobs": resp.r2_keys.len() }))
+}
+
 pub async fn patch_message(
     mut req: HttpRequest,
     env: &Env,
