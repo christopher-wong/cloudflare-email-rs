@@ -50,15 +50,30 @@ export default function Thread() {
     };
     void load();
     const unsub = realtime.subscribe((ev) => {
-      // Only refresh if the new message belongs to THIS thread, or if no
-      // thread_id was sent (inbound notify omits it — re-fetch defensively).
-      if (ev.type === 'message.new') {
-        const tid = (ev as { thread_id?: string }).thread_id;
-        if (!tid || tid === id) void load();
+      // React to changes that affect THIS thread. We re-fetch on
+      // new/delete events for the thread, and on read/star events for
+      // any message we're currently rendering. We don't try to be
+      // surgical — a re-fetch is cheap and avoids divergence bugs.
+      switch (ev.type) {
+        case 'message.new': {
+          const tid = (ev as { thread_id?: string }).thread_id;
+          if (!tid || tid === id) void load();
+          break;
+        }
+        case 'thread.delete':
+          if (ev.thread_id === id) nav('/', { replace: true });
+          break;
+        case 'message.delete':
+          if (!ev.thread_id || ev.thread_id === id) void load();
+          break;
+        case 'message.read':
+        case 'message.star':
+          if (msgs?.some((m) => m.id === ev.msg_id)) void load();
+          break;
       }
     });
     return () => { cancelled = true; unsub(); };
-  }, [id]);
+  }, [id, msgs]);
 
   const priv = sessionPriv();
   const decoded = useMemo<Decoded[] | null>(() => {

@@ -35,7 +35,15 @@ export default function Sent() {
   useEffect(() => {
     void load();
     return realtime.subscribe((ev) => {
-      if (ev.type === 'message.new' && ev.direction === 'out') void load();
+      switch (ev.type) {
+        case 'message.new':
+          if (ev.direction === 'out') void load();
+          break;
+        case 'thread.delete':
+        case 'message.delete':
+          void load();
+          break;
+      }
     });
   }, []);
 

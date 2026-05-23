@@ -14,6 +14,16 @@ pub struct MailboxDO {
 
 impl DurableObject for MailboxDO {
     fn new(state: State, env: Env) -> Self {
+        // Configure a hibernation-safe heartbeat. The runtime answers any
+        // realtime client that sends the text frame "ping" with "pong"
+        // *without waking the DO*, so NAT/middlebox idle timeouts get
+        // refreshed without burning DO billing on every heartbeat. The call
+        // is idempotent — runs every time the DO is rehydrated.
+        if let Ok(pair) =
+            worker::worker_sys::WebSocketRequestResponsePair::new("ping", "pong")
+        {
+            state.set_websocket_auto_response(&pair);
+        }
         Self { state, env }
     }
 
@@ -468,6 +478,11 @@ impl MailboxDO {
                  ) WHERE id = (SELECT thread_id FROM messages WHERE id = ?)",
                 Some(vec![body.id.clone().into()]),
             )?;
+            self.broadcast(&serde_json::json!({
+                "type": "message.read",
+                "msg_id": body.id,
+                "read": read,
+            }));
         }
         if let Some(starred) = body.starred {
             sql.exec(
@@ -478,8 +493,13 @@ impl MailboxDO {
                 "UPDATE threads SET has_starred = (
                    SELECT COALESCE(MAX(starred), 0) FROM messages WHERE thread_id = threads.id
                  ) WHERE id = (SELECT thread_id FROM messages WHERE id = ?)",
-                Some(vec![body.id.into()]),
+                Some(vec![body.id.clone().into()]),
             )?;
+            self.broadcast(&serde_json::json!({
+                "type": "message.star",
+                "msg_id": body.id,
+                "starred": starred,
+            }));
         }
         Response::ok("{}")
     }
@@ -508,6 +528,12 @@ impl MailboxDO {
             "DELETE FROM messages WHERE id = ?",
             Some(vec![id.clone().into()]),
         )?;
+        let thread_id_for_event = tids.first().map(|r| r.thread_id.clone());
+        self.broadcast(&serde_json::json!({
+            "type": "message.delete",
+            "msg_id": id,
+            "thread_id": thread_id_for_event,
+        }));
         if let Some(tid) = tids.into_iter().next().map(|r| r.thread_id) {
             #[derive(Deserialize)]
             struct Agg {
@@ -571,17 +597,21 @@ impl MailboxDO {
     }
 
     /// Broadcast a small JSON event to every attached realtime socket on
-    /// this mailbox. Fired from the worker after a successful inbound or
-    /// outbound message insert. Best-effort: per-socket send failures are
-    /// logged and skipped; we never propagate them to the caller.
-    async fn notify(&self, mut req: Request) -> Result<Response> {
-        let body: serde_json::Value = req.json().await.unwrap_or(serde_json::Value::Null);
-        let msg = serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string());
+    /// this mailbox. Used both by the public /notify endpoint (called from
+    /// the worker after inbound/outbound inserts) and by internal mutation
+    /// handlers below (patch, delete, draft, etc).
+    fn broadcast(&self, payload: &serde_json::Value) {
+        let msg = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string());
         for ws in self.state.get_websockets() {
             if let Err(e) = ws.send_with_str(&msg) {
-                console_log!("mailbox.notify.send_failed err={e}");
+                console_log!("mailbox.broadcast.send_failed err={e}");
             }
         }
+    }
+
+    async fn notify(&self, mut req: Request) -> Result<Response> {
+        let body: serde_json::Value = req.json().await.unwrap_or(serde_json::Value::Null);
+        self.broadcast(&body);
         Response::ok("{}")
     }
 
@@ -631,8 +661,12 @@ impl MailboxDO {
         )?;
         sql.exec(
             "DELETE FROM threads WHERE id = ?",
-            Some(vec![tid.into()]),
+            Some(vec![tid.clone().into()]),
         )?;
+        self.broadcast(&serde_json::json!({
+            "type": "thread.delete",
+            "thread_id": tid,
+        }));
 
         #[derive(Serialize)]
         struct Resp { r2_keys: Vec<String> }
@@ -687,6 +721,11 @@ impl MailboxDO {
                 now.into(),
             ]),
         )?;
+        self.broadcast(&serde_json::json!({
+            "type": "draft.upsert",
+            "draft_id": id,
+            "updated_at": now,
+        }));
         Response::from_json(&serde_json::json!({ "id": id, "updated_at": now }))
     }
 
@@ -741,7 +780,11 @@ impl MailboxDO {
             .map(|(_, v)| v.to_string())
             .ok_or_else(|| Error::RustError("id required".into()))?;
         self.sql()
-            .exec("DELETE FROM drafts WHERE id = ?", Some(vec![id.into()]))?;
+            .exec("DELETE FROM drafts WHERE id = ?", Some(vec![id.clone().into()]))?;
+        self.broadcast(&serde_json::json!({
+            "type": "draft.delete",
+            "draft_id": id,
+        }));
         Response::ok("{}")
     }
 

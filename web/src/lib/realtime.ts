@@ -18,6 +18,12 @@
 
 export type RealtimeEvent =
   | { type: 'message.new'; direction: 'in' | 'out'; msg_id: string; thread_id?: string }
+  | { type: 'message.read'; msg_id: string; read: boolean }
+  | { type: 'message.star'; msg_id: string; starred: boolean }
+  | { type: 'message.delete'; msg_id: string; thread_id?: string | null }
+  | { type: 'thread.delete'; thread_id: string }
+  | { type: 'draft.upsert'; draft_id: string; updated_at: number }
+  | { type: 'draft.delete'; draft_id: string }
   | { type: string; [k: string]: unknown };
 
 type Handler = (ev: RealtimeEvent) => void;
@@ -27,6 +33,37 @@ let socket: WebSocket | null = null;
 let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = true;
+
+// Heartbeat. The MailboxDO has setWebSocketAutoResponse("ping","pong")
+// configured, so the runtime replies to our pings without waking the DO.
+// We send a ping every 25s to keep NAT/middlebox idle timeouts from
+// dropping us silently, and if we go >75s without a pong we treat the
+// connection as dead and force-reconnect.
+const PING_INTERVAL_MS = 25_000;
+const PONG_TIMEOUT_MS = 75_000;
+let pingTimer: ReturnType<typeof setInterval> | null = null;
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+let lastPongAt = 0;
+
+function clearHeartbeat() {
+  if (pingTimer !== null) { clearInterval(pingTimer); pingTimer = null; }
+  if (watchdogTimer !== null) { clearInterval(watchdogTimer); watchdogTimer = null; }
+}
+
+function startHeartbeat() {
+  clearHeartbeat();
+  lastPongAt = Date.now();
+  pingTimer = setInterval(() => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      try { socket.send('ping'); } catch { /* close handler will reconnect */ }
+    }
+  }, PING_INTERVAL_MS);
+  watchdogTimer = setInterval(() => {
+    if (Date.now() - lastPongAt > PONG_TIMEOUT_MS && socket) {
+      try { socket.close(4000, 'heartbeat-timeout'); } catch { /* ignore */ }
+    }
+  }, 5_000);
+}
 
 function url(): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -57,20 +94,22 @@ function connect() {
   }
   socket.addEventListener('open', () => {
     reconnectAttempt = 0;
+    startHeartbeat();
   });
   socket.addEventListener('message', (e) => {
+    if (typeof e.data !== 'string') return;
+    if (e.data === 'pong') { lastPongAt = Date.now(); return; }
+    // Any inbound message counts as proof-of-life too.
+    lastPongAt = Date.now();
     let parsed: RealtimeEvent | null = null;
-    try {
-      parsed = JSON.parse(typeof e.data === 'string' ? e.data : '') as RealtimeEvent;
-    } catch {
-      return;
-    }
+    try { parsed = JSON.parse(e.data) as RealtimeEvent; } catch { return; }
     if (!parsed) return;
     for (const h of handlers) {
       try { h(parsed); } catch { /* swallow per-handler errors */ }
     }
   });
   socket.addEventListener('close', () => {
+    clearHeartbeat();
     socket = null;
     scheduleReconnect();
   });
@@ -94,6 +133,7 @@ export function stop() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  clearHeartbeat();
   if (socket) {
     try { socket.close(1000, 'client-stop'); } catch { /* ignore */ }
     socket = null;

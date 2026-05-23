@@ -7,6 +7,7 @@ import Loader from '@/components/Loader';
 
 import * as api from '@/lib/api';
 import { b64uDecode, openSealedString } from '@/lib/crypto';
+import * as realtime from '@/lib/realtime';
 import { sessionPriv } from '@/lib/webauthn';
 import { relativeDate } from '@/lib/time';
 
@@ -24,7 +25,12 @@ export default function Drafts() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void load();
+    return realtime.subscribe((ev) => {
+      if (ev.type === 'draft.upsert' || ev.type === 'draft.delete') void load();
+    });
+  }, []);
 
   const deleteDraft = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();

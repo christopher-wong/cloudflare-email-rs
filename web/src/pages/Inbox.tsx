@@ -30,7 +30,21 @@ export default function Inbox() {
   useEffect(() => {
     void load();
     return realtime.subscribe((ev) => {
-      if (ev.type === 'message.new' && ev.direction === 'in') void load();
+      // Re-fetch on anything that could change what the inbox shows:
+      // a new inbound message, a thread or message getting deleted from
+      // another tab, or read/star state flipping (which changes the
+      // unread badge and the star chip on the row).
+      switch (ev.type) {
+        case 'message.new':
+          if (ev.direction === 'in') void load();
+          break;
+        case 'thread.delete':
+        case 'message.delete':
+        case 'message.read':
+        case 'message.star':
+          void load();
+          break;
+      }
     });
   }, []);
 
