@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "description": "Open-source email web app on Cloudflare — passkey auth, E2E body encryption, Workers + Durable Objects.",
+  "workspaces": [
+    "web"
+  ],
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "npm --prefix web run build && wrangler deploy",
