@@ -122,6 +122,10 @@ mod tests {
         assert_eq!(prefix_of("nope"), None);
     }
 
+    // ksuid() calls worker::Date::now(), a wasm-bindgen extern that
+    // panics on the native target with "cannot call wasm-bindgen imported
+    // functions on non-wasm targets". Only run this test under wasm.
+    #[cfg(target_arch = "wasm32")]
     #[test]
     fn ksuid_shape() {
         let id = user();

@@ -11,7 +11,7 @@
 # Configuration lives in wrangler.jsonc (vars block). The Rust target is
 # wasm32-unknown-unknown; `make install` adds it if missing.
 
-.PHONY: install web worker build dev deploy clean check openapi
+.PHONY: install web worker build dev deploy clean check test test-web test-worker openapi
 
 install:
 	npm install
@@ -36,6 +36,18 @@ deploy: build
 check:
 	cargo check --manifest-path worker/Cargo.toml --target wasm32-unknown-unknown
 	npm --prefix web run typecheck
+
+# Run all unit tests.
+#   worker: cargo test on the native target (wasm-bindgen externs are gated
+#           with #[cfg(target_arch = "wasm32")] where they'd panic).
+#   web:    vitest run with happy-dom.
+test: test-worker test-web
+
+test-worker:
+	cargo test --lib --manifest-path worker/Cargo.toml
+
+test-web:
+	npm --prefix web run test
 
 clean:
 	rm -rf web/dist web/node_modules/.vite
