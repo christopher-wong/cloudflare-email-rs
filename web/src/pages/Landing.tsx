@@ -29,13 +29,8 @@ export default function Landing() {
           mail that nobody else reads.
         </h1>
         <p className="mx-auto mt-5 max-w-xl text-base leading-7">
-          Your messages and attachments are locked with a key that
-          only your phone or laptop has. While they sit on our
-          servers, no one else can read them. Not us. Not Cloudflare.
-          When you send a message to a Gmail or Outlook inbox, it
-          leaves us as a normal email, so the person you wrote to can
-          read it like any other email they get. Sign in with your
-          face or fingerprint. No passwords to forget or get stolen.
+          Your inbox is locked with a key only your phone has. Sign
+          in with your face or fingerprint — no password to remember.
         </p>
         <div className="mt-7 flex items-center justify-center gap-3">
           <Link to="/login" className="btn btn-primary label px-4 py-3">
