@@ -4,7 +4,7 @@
  * collapsed-by-default with the most recent expanded.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import Toolbar from '@/components/Toolbar';
@@ -50,6 +50,17 @@ export default function Thread() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // attachments keyed by message_id
   const [attsByMsg, setAttsByMsg] = useState<Record<string, AttachmentRow[]>>({});
+  // Tracks whether we've already auto-expanded the latest message on the
+  // *first* load of this thread. Realtime events (message.read fires from
+  // our own mark-as-read PATCH inside load()) re-trigger load(), and we
+  // don't want each refresh to clobber whatever the user is currently
+  // reading. Reset when the thread id changes.
+  const initialExpansionApplied = useRef(false);
+
+  // Reset the "auto-expand latest" gate whenever the thread changes.
+  useEffect(() => {
+    initialExpansionApplied.current = false;
+  }, [id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,7 +69,10 @@ export default function Thread() {
         const data = await api.get<api.MessageRow[]>(`/api/threads/${id}`);
         if (cancelled) return;
         setMsgs(data);
-        if (data.length > 0) setExpandedId(data[data.length - 1].id);
+        if (data.length > 0 && !initialExpansionApplied.current) {
+          setExpandedId(data[data.length - 1].id);
+          initialExpansionApplied.current = true;
+        }
         // Mark all inbound as read.
         await Promise.allSettled(
           data
@@ -255,23 +269,25 @@ export default function Thread() {
                     {absoluteDate(d.row.sent_at)}
                   </div>
                   {/*
-                    Render both directions identically. Outbound bodies are
-                    the user's own markdown source — we always parsed those
-                    here. Inbound bodies are plain text post html_to_text
-                    (the server already stripped HTML tags on receive), so
-                    feeding them through marked is safe: any markdown-ish
-                    syntax that survived (`*`, `_`, URLs) gets the same
-                    treatment as our own source, and the html_to_text
-                    sanitization guarantees there's no markup to escape.
+                    Outbound bodies are the user's own WYSIWYG HTML (from
+                    contentEditable in Compose) — render as-is. Inbound
+                    bodies are plain text post html_to_text on the server,
+                    so we run them through marked.parse to get paragraphs,
+                    autolinked URLs, and consistent visual output. Either
+                    way the rendered shape is the same: an HTML fragment
+                    we drop into the same `prose-sm` wrapper.
                   */}
                   <div
                     className="prose-sm font-sans text-sm leading-snug"
                     dangerouslySetInnerHTML={{
-                      __html: marked.parse(d.body, {
-                        async: false,
-                        gfm: true,
-                        breaks: true,
-                      }) as string,
+                      __html:
+                        d.row.direction === 'out'
+                          ? d.body
+                          : (marked.parse(d.body, {
+                              async: false,
+                              gfm: true,
+                              breaks: true,
+                            }) as string),
                     }}
                   />
                   {d.attachments.length > 0 && (

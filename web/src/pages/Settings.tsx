@@ -4,6 +4,7 @@ import Toolbar from '@/components/Toolbar';
 import * as api from '@/lib/api';
 import { useApp } from '@/lib/store';
 import { addPasskey } from '@/lib/webauthn';
+import * as notifications from '@/lib/notifications';
 import { absoluteDate } from '@/lib/time';
 
 interface Passkey {
@@ -24,6 +25,12 @@ export default function Settings() {
   const [passkeys, setPasskeys] = useState<Passkey[] | null>(null);
   const [pkBusy, setPkBusy] = useState(false);
   const [newLabel, setNewLabel] = useState('');
+
+  const [notifyState, setNotifyState] = useState(notifications.permissionState());
+  const enableNotifications = async () => {
+    const next = await notifications.requestPermission();
+    setNotifyState(next);
+  };
 
   const loadPasskeys = async () => {
     try {
@@ -160,6 +167,29 @@ export default function Settings() {
             {pkBusy ? 'adding…' : 'add passkey ▸'}
           </button>
         </form>
+      </section>
+
+      <section className="hair-all">
+        <div className="hair-b label px-3 py-2">notifications</div>
+        <div className="grid grid-cols-[1fr_auto] items-center gap-3 p-3 text-sm">
+          <div>
+            <div>desktop notifications for new mail</div>
+            <div className="text-mute text-2xs mt-1">
+              {notifyState === 'granted' && 'enabled — you\'ll see a system toast when the tab is in the background.'}
+              {notifyState === 'denied' && 'denied — re-enable in your browser settings if you change your mind.'}
+              {notifyState === 'default' && 'click enable to get a toast when a new email arrives while this tab isn\'t focused.'}
+              {notifyState === 'unsupported' && 'this browser doesn\'t support the Notifications API.'}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn label"
+            disabled={notifyState !== 'default'}
+            onClick={() => void enableNotifications()}
+          >
+            {notifyState === 'granted' ? 'enabled' : notifyState === 'denied' ? 'blocked' : 'enable ▸'}
+          </button>
+        </div>
       </section>
 
       <section className="hair-all">

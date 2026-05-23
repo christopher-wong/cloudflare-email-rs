@@ -17,7 +17,17 @@
  */
 
 export type RealtimeEvent =
-  | { type: 'message.new'; direction: 'in' | 'out'; msg_id: string; thread_id?: string }
+  | {
+      type: 'message.new';
+      direction: 'in' | 'out';
+      msg_id: string;
+      thread_id?: string;
+      /** Plain header `From` address. Inbound notifies set this. */
+      from_addr?: string;
+      from_name?: string | null;
+      /** Sealed subject (base64url) so the client can decrypt + display. */
+      subject_ct_b64?: string;
+    }
   | { type: 'message.read'; msg_id: string; read: boolean }
   | { type: 'message.star'; msg_id: string; starred: boolean }
   | { type: 'message.delete'; msg_id: string; thread_id?: string | null }

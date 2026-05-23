@@ -304,6 +304,8 @@ impl MailboxDO {
         struct First {
             #[serde(with = "serde_bytes")]
             subject_ct: Vec<u8>,
+            #[serde(with = "serde_bytes", default)]
+            snippet_ct: Option<Vec<u8>>,
             from_addr: String,
             direction: String,
         }
@@ -313,25 +315,28 @@ impl MailboxDO {
             let firsts: Vec<First> = self
                 .sql()
                 .exec(
-                    "SELECT subject_ct, from_addr, direction
+                    "SELECT subject_ct, snippet_ct, from_addr, direction
                      FROM messages
                      WHERE thread_id = ?
                      ORDER BY sent_at ASC LIMIT 1",
                     Some(vec![r.id.clone().into()]),
                 )?
                 .to_array()?;
-            let (first_subject, first_from, first_dir) = match firsts.into_iter().next() {
-                Some(f) => (
-                    Some(crate::b64::url_encode(&f.subject_ct)),
-                    Some(f.from_addr),
-                    Some(f.direction),
-                ),
-                None => (None, None, None),
-            };
+            let (first_subject, first_snippet, first_from, first_dir) =
+                match firsts.into_iter().next() {
+                    Some(f) => (
+                        Some(crate::b64::url_encode(&f.subject_ct)),
+                        f.snippet_ct.as_deref().map(crate::b64::url_encode),
+                        Some(f.from_addr),
+                        Some(f.direction),
+                    ),
+                    None => (None, None, None, None),
+                };
             out.push(ThreadRow {
                 id: r.id,
                 subject_hint: r.subject_hint,
                 first_subject_ct_b64: first_subject,
+                first_snippet_ct_b64: first_snippet,
                 first_from_addr: first_from,
                 first_direction: first_dir,
                 participants: serde_json::from_str(&r.participants.unwrap_or_default())
@@ -991,6 +996,10 @@ struct ThreadRow {
     /// show a real subject in the inbox row without leaking plaintext to
     /// the server. May be absent on legacy rows without a stored subject.
     first_subject_ct_b64: Option<String>,
+    /// Ciphertext of the first message's body snippet (~140 char preview).
+    /// Lets the inbox show a one-line preview without an extra fetch.
+    /// Absent on outbound rows because we don't store snippets for those.
+    first_snippet_ct_b64: Option<String>,
     /// from_addr of the first message in the thread. Used to label the row
     /// "from X" vs "to Y" based on the message direction.
     first_from_addr: Option<String>,

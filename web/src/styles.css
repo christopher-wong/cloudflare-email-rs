@@ -143,22 +143,21 @@
   .btn-ghost:hover { border-color: #000; background: #fff; color: #000; }
 
   /* A row in a list (inbox, sent, drafts, etc).
-     Columns: sender | subject | date | optional action slot.
-     fit-content(22rem) sizes the first column to its content, capped at 22rem
-     before .truncate kicks in. Note: fit-content() can't be nested inside
-     minmax() — that combination is invalid CSS and silently collapses the
-     grid into a single column. */
+     Layout: avatar | text-block | date | optional action.
+     The text-block holds a two-line stack (sender + subject/preview);
+     we use grid not flex so the date and action stay aligned across
+     rows even when avatars vary slightly. */
   .row {
     display: grid;
-    grid-template-columns: fit-content(22rem) minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
     align-items: center;
-    gap: 1rem;
-    padding: 0.625rem 0.875rem;
+    gap: 0.875rem;
+    padding: 0.75rem 0.875rem;
     border-bottom: 1px solid #000;
     cursor: pointer;
   }
   .row:hover { background: #000; color: #fff; }
-  .row.unread { font-weight: 700; }
+  .row.unread .row-sender { font-weight: 700; }
 
   /* Field row used in forms */
   .field {
@@ -192,6 +191,15 @@
     letter-spacing: 0.06em;
   }
   .chip-inv { background: #000; color: #fff; }
+
+  /* contentEditable placeholder: shows the data-placeholder text when the
+     element is empty. Browsers don't paint native ::placeholder on
+     contenteditable, so we fake it via a ::before pseudo. */
+  [contenteditable=true]:empty::before {
+    content: attr(data-placeholder);
+    color: #999;
+    pointer-events: none;
+  }
 
   /* Keyboard hint */
   .kbd {

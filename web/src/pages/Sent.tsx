@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import Toolbar from '@/components/Toolbar';
 import Loader from '@/components/Loader';
 import EmptyState from '@/components/EmptyState';
+import Avatar from '@/components/Avatar';
 
 import * as api from '@/lib/api';
 import { b64uDecode, openSealedString } from '@/lib/crypto';
@@ -47,18 +48,24 @@ export default function Sent() {
     });
   }, []);
 
-  const decryptedSubjects = useMemo(() => {
-    if (!threads) return new Map<string, string>();
+  const decrypted = useMemo(() => {
+    const map = new Map<string, { subject?: string; snippet?: string }>();
+    if (!threads) return map;
     const priv = sessionPriv();
-    if (!priv) return new Map<string, string>();
-    const m = new Map<string, string>();
+    if (!priv) return map;
     for (const t of threads) {
-      if (!t.first_subject_ct_b64) continue;
-      try {
-        m.set(t.id, openSealedString(b64uDecode(t.first_subject_ct_b64), priv));
-      } catch { /* decrypt failed — leave undefined */ }
+      const e: { subject?: string; snippet?: string } = {};
+      if (t.first_subject_ct_b64) {
+        try { e.subject = openSealedString(b64uDecode(t.first_subject_ct_b64), priv); }
+        catch { /* keep undefined */ }
+      }
+      if (t.first_snippet_ct_b64) {
+        try { e.snippet = openSealedString(b64uDecode(t.first_snippet_ct_b64), priv); }
+        catch { /* keep undefined */ }
+      }
+      map.set(t.id, e);
     }
-    return m;
+    return map;
   }, [threads]);
 
   const ownAddresses = useMemo(
@@ -96,26 +103,39 @@ export default function Sent() {
       {threads && threads.length > 0 && (
         <ul className="flex-1 overflow-y-auto">
           {threads.map((t) => {
-            const subject = decryptedSubjects.get(t.id);
+            const dec = decrypted.get(t.id) ?? {};
+            const sender = labelFor(t);
+            const subject = dec.subject?.trim() || (sessionPriv() ? '(no subject)' : '[encrypted]');
+            const preview = dec.snippet?.trim() ?? '';
+            // For Sent rows the avatar represents the recipient, not us.
+            // Fall back to the row label so the seed is stable.
+            const avatarSeed = t.participants.find(
+              (a) => !ownAddresses.has(a.toLowerCase()),
+            ) ?? sender;
             return (
               <li key={t.id} className="row" onClick={() => nav(`/thread/${t.id}`)}>
-                <div className="truncate">{labelFor(t)}</div>
-                <div className="flex items-center gap-2 truncate">
-                  {subject ? (
-                    <span className="truncate">{subject || '(no subject)'}</span>
-                  ) : (
-                    <span className="text-mute text-xs">
-                      {sessionPriv() ? '(no subject)' : '[encrypted]'}
-                    </span>
-                  )}
-                  {t.message_count > 1 && (
-                    <span className="chip">{t.message_count}</span>
-                  )}
+                <Avatar seed={avatarSeed} />
+                <div className="min-w-0">
+                  <div className="flex items-baseline gap-2">
+                    <span className="row-sender truncate">{sender}</span>
+                    {t.message_count > 1 && (
+                      <span className="text-mute text-2xs">{t.message_count}</span>
+                    )}
+                  </div>
+                  <div className="text-xs truncate">
+                    <span>{subject}</span>
+                    {preview && (
+                      <>
+                        <span className="text-mute mx-1.5">·</span>
+                        <span className="text-mute">{preview}</span>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div className="text-right text-xs">{relativeDate(t.last_message_at)}</div>
+                <div className="text-2xs whitespace-nowrap">{relativeDate(t.last_message_at)}</div>
                 <button
                   type="button"
-                  className="btn label ml-2"
+                  className="btn label"
                   onClick={(e) => deleteThread(e, t.id)}
                   title="delete thread"
                 >

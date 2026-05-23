@@ -92,7 +92,10 @@ async fn handle_impl(
     let subject = parsed.subject().unwrap_or("").to_string();
     let text_body = parsed.body_text(0).map(|s| s.to_string()).unwrap_or_default();
     let html_body = parsed.body_html(0).map(|s| s.to_string());
-    let snippet: String = text_body.chars().take(140).collect();
+    // Snippet is computed per-recipient below, from the final display body
+    // (which prefers text/plain but falls back to html_to_text(html_body)).
+    // Deriving it from text_body alone would empty the preview line for
+    // HTML-only mail.
     let message_id = parsed
         .message_id()
         .map(|s| strip_angle(s))
@@ -239,6 +242,12 @@ async fn handle_impl(
                 .map(html_to_text)
                 .unwrap_or_default()
         };
+        // Snippet = first ~140 chars of the final display body. For HTML
+        // emails this naturally picks up the "pre-header" — senders use a
+        // display:none div at the top of the body as a list-preview line,
+        // and since html_to_text doesn't honor display:none it appears
+        // first in the stripped output. Standard inbox-preview behaviour.
+        let snippet: String = display_body.chars().take(140).collect();
         let body_ct = crate::crypto::seal_to(&pk, display_body.as_bytes())?;
         let snippet_ct = crate::crypto::seal_to(&pk, snippet.as_bytes())?;
 
@@ -318,9 +327,10 @@ async fn handle_impl(
             header_message_id,
         );
 
-        // Best-effort realtime push to any tabs the user has open. Don't
-        // propagate errors — the message is already stored, the push is
-        // just a courtesy.
+        // Best-effort realtime push to any tabs the user has open. We
+        // include enough metadata (sender, sealed subject) for the SPA
+        // to render a system-level Notification without a follow-up
+        // fetch. Don't propagate errors — the message is stored.
         if let Err(e) = api::stub_json::<serde_json::Value>(
             &mailbox,
             Method::Post,
@@ -329,6 +339,9 @@ async fn handle_impl(
                 "type": "message.new",
                 "direction": "in",
                 "msg_id": msg_id,
+                "from_addr": header_from_addr,
+                "from_name": from_name,
+                "subject_ct_b64": b64::url_encode(&subject_ct),
             })),
         )
         .await
@@ -391,9 +404,12 @@ pub fn html_to_text(html: &str) -> String {
             let tag = std::str::from_utf8(&bytes[i + 1..j])
                 .unwrap_or("")
                 .to_lowercase();
+            // Strip leading '/' (closing tags) and split on whitespace OR '/'
+            // so self-closing forms like `<br/>` (no space) match the same
+            // tag name as `<br>` / `<br />`.
             let tag_name = tag
                 .trim_start_matches('/')
-                .split(|c: char| c.is_whitespace() || c == '>')
+                .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
                 .next()
                 .unwrap_or("");
             match tag_name {
@@ -463,4 +479,93 @@ fn strip_block(s: &str, tag: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_angle_strips_brackets_and_whitespace() {
+        assert_eq!(strip_angle("<abc@host>"), "abc@host");
+        assert_eq!(strip_angle("  <abc@host>  "), "abc@host");
+        assert_eq!(strip_angle("abc@host"), "abc@host");
+        assert_eq!(strip_angle(""), "");
+    }
+
+    #[test]
+    fn html_to_text_strips_tags_and_preserves_paragraphs() {
+        let html = "<p>Hello</p><p>World</p>";
+        let out = html_to_text(html);
+        assert!(out.contains("Hello"));
+        assert!(out.contains("World"));
+        // Block-level tags produce paragraph breaks, not glued lines.
+        assert!(!out.contains("HelloWorld"));
+    }
+
+    #[test]
+    fn html_to_text_drops_script_and_style_blocks_entirely() {
+        let html =
+            "<style>body{color:red}</style>real content<script>alert(1)</script>more";
+        let out = html_to_text(html);
+        // The contents of script/style must NOT survive the strip — they
+        // are not user-facing text.
+        assert!(!out.contains("color:red"));
+        assert!(!out.contains("alert(1)"));
+        assert!(out.contains("real content"));
+        assert!(out.contains("more"));
+    }
+
+    #[test]
+    fn html_to_text_decodes_common_entities() {
+        let html = "AT&amp;T &lt;3 &quot;quotes&quot; &nbsp; tail";
+        let out = html_to_text(html);
+        assert!(out.contains("AT&T"));
+        assert!(out.contains("<3"));
+        assert!(out.contains("\"quotes\""));
+    }
+
+    #[test]
+    fn html_to_text_preheader_pattern_surfaces_first() {
+        // The standard pre-header technique: a hidden div with the inbox
+        // preview, followed by the real content. Since html_to_text
+        // doesn't honor display:none, the pre-header naturally appears
+        // first in the output — which is exactly what we want when we
+        // take the first ~140 chars as the snippet.
+        let html = r#"
+            <div style="display:none">PREHEADER preview line</div>
+            <p>Body of the email.</p>
+        "#;
+        let out = html_to_text(html);
+        let idx_pre = out.find("PREHEADER preview line").unwrap();
+        let idx_body = out.find("Body of the email").unwrap();
+        assert!(idx_pre < idx_body);
+    }
+
+    #[test]
+    fn html_to_text_collapses_excess_blank_lines() {
+        let html = "<p>one</p><p></p><p></p><p></p><p>two</p>";
+        let out = html_to_text(html);
+        // We allow at most one or two blank lines between paragraphs.
+        // Counting 3+ consecutive newlines tells us the collapser is on.
+        assert!(!out.contains("\n\n\n\n"));
+    }
+
+    #[test]
+    fn html_to_text_handles_self_closing_br() {
+        let html = "line one<br/>line two<br />line three";
+        let out = html_to_text(html);
+        assert!(out.contains("line one"));
+        assert!(out.contains("line two"));
+        assert!(out.contains("line three"));
+        // Each <br> should produce a line break.
+        let lines: Vec<&str> = out.split('\n').filter(|l| !l.trim().is_empty()).collect();
+        assert!(lines.len() >= 3, "expected ≥3 non-empty lines, got {:?}", lines);
+    }
+
+    #[test]
+    fn html_to_text_handles_input_with_no_tags() {
+        let out = html_to_text("just plain text");
+        assert_eq!(out, "just plain text");
+    }
 }

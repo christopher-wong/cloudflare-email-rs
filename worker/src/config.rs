@@ -127,3 +127,84 @@ pub fn require_admin(_env: &Env) -> ApiResult<()> {
 pub fn err_internal(msg: impl Into<String>) -> ApiError {
     ApiError::Internal(msg.into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(primary: &str, additional: &[&str]) -> AppConfig {
+        AppConfig {
+            primary_domain: primary.to_string(),
+            additional_domains: additional.iter().map(|s| s.to_string()).collect(),
+            app_host: primary.to_string(),
+            app_name: "cfemail".to_string(),
+            session_ttl_days: 30,
+        }
+    }
+
+    #[test]
+    fn canonical_lowercases_and_strips_plus_aliases() {
+        assert_eq!(
+            canonical_address("Christopher+Newsletter@MiddleSeat.VC"),
+            "christopher@middleseat.vc",
+        );
+    }
+
+    #[test]
+    fn canonical_handles_no_plus_alias() {
+        assert_eq!(
+            canonical_address("hello@example.com"),
+            "hello@example.com",
+        );
+    }
+
+    #[test]
+    fn canonical_trims_whitespace() {
+        assert_eq!(canonical_address("  user@host  "), "user@host");
+    }
+
+    #[test]
+    fn canonical_returns_input_for_unparseable_addresses() {
+        // No @ — return lowercase trimmed but don't synthesize one.
+        assert_eq!(canonical_address("not-an-email"), "not-an-email");
+    }
+
+    #[test]
+    fn owns_primary_domain() {
+        let c = cfg("middleseat.vc", &[]);
+        assert!(c.owns_address("christopher@middleseat.vc"));
+        assert!(c.owns_address("anyone@middleseat.vc"));
+    }
+
+    #[test]
+    fn owns_additional_domains() {
+        let c = cfg("middleseat.vc", &["alt.example", "other.test"]);
+        assert!(c.owns_address("foo@alt.example"));
+        assert!(c.owns_address("foo@other.test"));
+        assert!(c.owns_address("foo@middleseat.vc"));
+    }
+
+    #[test]
+    fn rejects_foreign_domains() {
+        let c = cfg("middleseat.vc", &["alt.example"]);
+        assert!(!c.owns_address("attacker@evil.com"));
+        // Subdomain isn't enough — exact match only.
+        assert!(!c.owns_address("foo@sub.middleseat.vc"));
+        // Trailing chars on the domain — not equal.
+        assert!(!c.owns_address("foo@middleseat.vc.evil.com"));
+    }
+
+    #[test]
+    fn domain_match_is_case_insensitive() {
+        let c = cfg("MiddleSeat.VC", &[]);
+        assert!(c.owns_address("user@middleseat.vc"));
+        assert!(c.owns_address("user@MIDDLESEAT.VC"));
+    }
+
+    #[test]
+    fn all_domains_returns_primary_first() {
+        let c = cfg("middleseat.vc", &["alt.example", "other.test"]);
+        let v = c.all_domains();
+        assert_eq!(v, vec!["middleseat.vc", "alt.example", "other.test"]);
+    }
+}

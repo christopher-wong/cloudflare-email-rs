@@ -69,6 +69,8 @@ export interface ThreadRow {
   subject_hint: string | null;
   /** Ciphertext of the first message's subject — decrypt client-side. */
   first_subject_ct_b64: string | null;
+  /** Ciphertext of the first message's snippet (~140 char body preview). */
+  first_snippet_ct_b64: string | null;
   /** from_addr of the first message. Use with first_direction to label rows. */
   first_from_addr: string | null;
   /** "in" or "out" — direction of the first message in the thread. */

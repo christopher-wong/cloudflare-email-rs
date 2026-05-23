@@ -7,7 +7,6 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { marked } from 'marked';
 
 import Toolbar from '@/components/Toolbar';
 import * as api from '@/lib/api';
@@ -87,53 +86,43 @@ export default function Compose() {
     return () => clearTimeout(handle);
   }, [subject, body, to, cc, bcc, draftId, myPub]);
 
-  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
 
   /**
-   * Wrap (or unwrap) the current selection in the textarea with the given
-   * delimiter pair. If nothing's selected, drop a placeholder so the user
-   * sees the syntax appear and can type the content. Re-focuses afterward
-   * so keyboard flow keeps going. Uses textarea.setRangeText so undo/redo
-   * stay native.
+   * Run a formatting command against the contentEditable selection, then
+   * sync our React-side `body` to the resulting innerHTML so autosave and
+   * send see the latest state. document.execCommand is deprecated on
+   * paper but remains the only cross-browser way to mutate a
+   * contentEditable selection with native undo/redo support.
    */
-  const wrapSelection = (open: string, close: string, placeholder = 'text') => {
+  const cmd = (name: string, value?: string) => {
     const el = bodyRef.current;
     if (!el) return;
-    const start = el.selectionStart ?? 0;
-    const end = el.selectionEnd ?? 0;
-    const value = el.value;
-    const selected = value.slice(start, end) || placeholder;
-    const replacement = `${open}${selected}${close}`;
-    el.setRangeText(replacement, start, end, 'end');
-    setBody(el.value);
-    // Reposition cursor inside the wrap so the user can keep typing.
-    const newPos = start + open.length + selected.length;
-    el.setSelectionRange(newPos, newPos);
     el.focus();
+    try {
+      document.execCommand(name, false, value);
+    } catch { /* ignore — some browsers throw for unsupported commands */ }
+    setBody(el.innerHTML);
   };
 
-  /**
-   * Prefix every line in the current selection (or the current line) with
-   * a marker — used for lists, blockquotes, and headings. Markdown line
-   * prefixes are line-oriented, so we operate over whole lines, not the
-   * raw range.
-   */
-  const prefixLines = (marker: string | ((n: number) => string)) => {
+  const wrapInline = (tag: 'code') => {
     const el = bodyRef.current;
     if (!el) return;
-    const value = el.value;
-    const start = el.selectionStart ?? 0;
-    const end = el.selectionEnd ?? 0;
-    const lineStart = value.lastIndexOf('\n', start - 1) + 1;
-    const lineEnd = value.indexOf('\n', end);
-    const sliceEnd = lineEnd === -1 ? value.length : lineEnd;
-    const lines = value.slice(lineStart, sliceEnd).split('\n');
-    const updated = lines
-      .map((l, i) => (typeof marker === 'string' ? marker : marker(i + 1)) + l)
-      .join('\n');
-    el.setRangeText(updated, lineStart, sliceEnd, 'end');
-    setBody(el.value);
     el.focus();
+    const sel = window.getSelection();
+    const text = sel?.toString() ?? '';
+    if (!text) {
+      document.execCommand('insertHTML', false, `<${tag}>code</${tag}>`);
+    } else {
+      document.execCommand('insertHTML', false, `<${tag}>${escapeHtml(text)}</${tag}>`);
+    }
+    setBody(el.innerHTML);
+  };
+
+  const insertLink = () => {
+    const url = prompt('url') ?? '';
+    if (!url) return;
+    cmd('createLink', url);
   };
 
   /**
@@ -196,16 +185,13 @@ export default function Compose() {
     setBusy(true);
     setErr(null);
     try {
-      // The text part stays the raw markdown source so plain-text clients
-      // (and our own mailbox copy) get readable content. The html part is
-      // the rendered markdown so HTML-capable clients get formatting. We
-      // don't sanitize because the rendered output goes to recipients'
-      // mail clients, which all sandbox HTML themselves — and the source
-      // is the user's own text, no XSS concern for us.
-      const html =
-        body.trim().length > 0
-          ? marked.parse(body, { async: false, gfm: true, breaks: true }) as string
-          : null;
+      // body is the contentEditable's innerHTML. Send the HTML directly
+      // for HTML-capable clients, and derive a readable text/plain
+      // fallback so legacy clients still get something sensible. No
+      // sanitization needed here — recipients' mail clients sandbox HTML,
+      // and the source is the user's own keystrokes.
+      const html = body.trim().length > 0 ? body : null;
+      const text = html ? htmlToPlainText(html) : '';
       await api.post('/api/messages/send', {
         from,
         from_name: state.me?.display_name || null,
@@ -213,7 +199,7 @@ export default function Compose() {
         cc: splitAddrs(cc),
         bcc: splitAddrs(bcc),
         subject,
-        text: body,
+        text,
         html,
         in_reply_to: rs.messageId ?? null,
         references: rs.references ?? null,
@@ -304,45 +290,26 @@ export default function Compose() {
         </div>
       </div>
 
-      <div className="hair-b flex flex-wrap items-center gap-1 px-2 py-1">
-        <FmtBtn label="B" title="bold (Markdown: **text**)" bold
-          onClick={() => wrapSelection('**', '**', 'bold')} />
-        <FmtBtn label="I" title="italic (Markdown: *text*)" italic
-          onClick={() => wrapSelection('*', '*', 'italic')} />
-        <FmtBtn label="S" title="strikethrough (Markdown: ~~text~~)" strike
-          onClick={() => wrapSelection('~~', '~~', 'strike')} />
-        <span className="text-mute mx-1">|</span>
-        <FmtBtn label="• list" title="bulleted list" onClick={() => prefixLines('- ')} />
-        <FmtBtn label="1. list" title="numbered list"
-          onClick={() => prefixLines((n) => `${n}. `)} />
-        <FmtBtn label="❝" title="blockquote" onClick={() => prefixLines('> ')} />
-        <span className="text-mute mx-1">|</span>
-        <FmtBtn label="‹ code ›" title="inline code (Markdown: `code`)"
-          onClick={() => wrapSelection('`', '`', 'code')} />
-        <FmtBtn label="block" title="code block (Markdown: ```)"
-          onClick={() => wrapSelection('\n```\n', '\n```\n', 'code')} />
-        <FmtBtn label="link" title="link (Markdown: [text](url))"
-          onClick={() => {
-            const url = prompt('url') ?? '';
-            if (!url) return;
-            wrapSelection('[', `](${url})`, 'text');
-          }} />
-        <span className="text-mute mx-1">|</span>
-        <FmtBtn label={attachingFile ? '⏳ attach' : '📎 attach'}
-          title="attach a file"
-          onClick={() => fileInputRef.current?.click()} />
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => void uploadFiles(e.target.files)}
-        />
-        <span className="ml-auto text-mute text-2xs">markdown</span>
-      </div>
+      {/*
+        The body composer. contentEditable means the user sees formatted
+        text live — typing into a bold range stays bold, list items get a
+        visible bullet, etc. We keep React's `body` state in sync via
+        onInput so autosave and send always see the latest innerHTML.
+        Initial content (e.g. quoted reply, restored draft) can be set
+        on mount via the ref; we leave it empty here for now.
+      */}
+      <div
+        ref={bodyRef}
+        className="prose-sm flex-1 w-full overflow-y-auto p-4 text-sm leading-relaxed focus:outline-none"
+        contentEditable
+        suppressContentEditableWarning
+        onInput={(e) => setBody((e.currentTarget as HTMLDivElement).innerHTML)}
+        data-placeholder="message…"
+        style={{ minHeight: '12rem' }}
+      />
 
       {attachments.length > 0 && (
-        <div className="hair-b flex flex-wrap items-center gap-2 px-3 py-2">
+        <div className="hair-t flex flex-wrap items-center gap-2 px-3 py-2">
           {attachments.map((a) => (
             <span
               key={a.id}
@@ -364,13 +331,38 @@ export default function Compose() {
         </div>
       )}
 
-      <textarea
-        ref={bodyRef}
-        className="flex-1 w-full resize-none border-0 p-4 leading-relaxed"
-        placeholder="message… (markdown supported)"
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-      />
+      {/* Formatting toolbar — at the bottom of the form so it stays
+          close to the keyboard on mobile and out of the way until the
+          user actually wants to format. */}
+      <div className="hair-t flex flex-wrap items-center gap-1 px-2 py-1">
+        <FmtBtn label="B" title="bold" bold onClick={() => cmd('bold')} />
+        <FmtBtn label="I" title="italic" italic onClick={() => cmd('italic')} />
+        <FmtBtn label="S" title="strikethrough" strike
+          onClick={() => cmd('strikeThrough')} />
+        <span className="text-mute mx-1">|</span>
+        <FmtBtn label="• list" title="bulleted list"
+          onClick={() => cmd('insertUnorderedList')} />
+        <FmtBtn label="1. list" title="numbered list"
+          onClick={() => cmd('insertOrderedList')} />
+        <FmtBtn label="❝" title="blockquote"
+          onClick={() => cmd('formatBlock', 'blockquote')} />
+        <span className="text-mute mx-1">|</span>
+        <FmtBtn label="‹ code ›" title="inline code" onClick={() => wrapInline('code')} />
+        <FmtBtn label="block" title="code block"
+          onClick={() => cmd('formatBlock', 'pre')} />
+        <FmtBtn label="link" title="link" onClick={insertLink} />
+        <span className="text-mute mx-1">|</span>
+        <FmtBtn label={attachingFile ? '⏳ attach' : '📎 attach'}
+          title="attach a file"
+          onClick={() => fileInputRef.current?.click()} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => void uploadFiles(e.target.files)}
+        />
+      </div>
 
       {err && <div className="hair-t inv px-3 py-2 text-sm">{err}</div>}
     </form>
@@ -407,6 +399,29 @@ function FmtBtn({
       {label}
     </button>
   );
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Best-effort HTML → plain text for the `text/plain` MIME alternative.
+ * Browsers don't give us a parsed-document-to-text utility, so we
+ * shovel through innerText on a hidden node: handles block breaks,
+ * <br>s, and entity decoding correctly without pulling in a dep.
+ */
+function htmlToPlainText(html: string): string {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  // innerText respects display/visibility so block elements get line
+  // breaks the way they would visually.
+  return (div.innerText ?? div.textContent ?? '').trim();
 }
 
 function formatBytes(n: number): string {

@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import Toolbar from '@/components/Toolbar';
 import EmptyState from '@/components/EmptyState';
 import Loader from '@/components/Loader';
+import Avatar from '@/components/Avatar';
 
 import * as api from '@/lib/api';
 import { b64uDecode, openSealedString } from '@/lib/crypto';
@@ -64,20 +65,26 @@ export default function Inbox() {
     }
   };
 
-  // Decrypt the first-message subject for each row. Cheap (one HKDF + AEAD
-  // per row), and the priv key stays in memory.
-  const decryptedSubjects = useMemo(() => {
-    if (!threads) return new Map<string, string>();
+  // Decrypt the first-message subject and snippet for each row. Cheap
+  // (one HKDF + AEAD per ciphertext) and the priv key stays in memory.
+  const decrypted = useMemo(() => {
+    const map = new Map<string, { subject?: string; snippet?: string }>();
+    if (!threads) return map;
     const priv = sessionPriv();
-    if (!priv) return new Map<string, string>();
-    const m = new Map<string, string>();
+    if (!priv) return map;
     for (const t of threads) {
-      if (!t.first_subject_ct_b64) continue;
-      try {
-        m.set(t.id, openSealedString(b64uDecode(t.first_subject_ct_b64), priv));
-      } catch { /* decrypt failed for this row — leave undefined */ }
+      const e: { subject?: string; snippet?: string } = {};
+      if (t.first_subject_ct_b64) {
+        try { e.subject = openSealedString(b64uDecode(t.first_subject_ct_b64), priv); }
+        catch { /* keep undefined */ }
+      }
+      if (t.first_snippet_ct_b64) {
+        try { e.snippet = openSealedString(b64uDecode(t.first_snippet_ct_b64), priv); }
+        catch { /* keep undefined */ }
+      }
+      map.set(t.id, e);
     }
-    return m;
+    return map;
   }, [threads]);
 
   const ownAddresses = useMemo(
@@ -151,8 +158,11 @@ export default function Inbox() {
       {threads && threads.length > 0 && (
         <ul className="flex-1 overflow-y-auto">
           {threads.map((t, i) => {
-            const subject = decryptedSubjects.get(t.id);
+            const dec = decrypted.get(t.id) ?? {};
+            const sender = labelFor(t);
             const isSelected = i === selectedIdx;
+            const subject = dec.subject?.trim() || (sessionPriv() ? '(no subject)' : '[encrypted]');
+            const preview = dec.snippet?.trim() ?? '';
             return (
               <li
                 key={t.id}
@@ -164,26 +174,36 @@ export default function Inbox() {
                 }
                 onClick={() => nav(`/thread/${t.id}`)}
               >
-                <div className="truncate">{labelFor(t)}</div>
-                <div className="flex items-center gap-2 truncate">
-                  {subject ? (
-                    <span className="truncate">{subject || '(no subject)'}</span>
-                  ) : (
-                    <span className="text-mute text-xs">
-                      {sessionPriv() ? '(no subject)' : '[encrypted]'}
-                    </span>
-                  )}
-                  {t.has_starred && <span className="chip">★</span>}
-                  {t.message_count > 1 && (
-                    <span className="chip">{t.message_count}</span>
-                  )}
+                <Avatar seed={t.first_from_addr ?? sender} />
+                <div className="min-w-0">
+                  {/* Top row: bold sender on the left, count + star chips
+                      on the right of the same line. */}
+                  <div className="flex items-baseline gap-2">
+                    <span className="row-sender truncate">{sender}</span>
+                    {t.message_count > 1 && (
+                      <span className="text-mute text-2xs">{t.message_count}</span>
+                    )}
+                    {t.has_starred && <span className="text-2xs">★</span>}
+                  </div>
+                  {/* Bottom row: subject, then preview in muted text after
+                      a separator. Both truncate to one line each so the row
+                      height stays stable. */}
+                  <div className="text-xs truncate">
+                    <span>{subject}</span>
+                    {preview && (
+                      <>
+                        <span className="text-mute mx-1.5">·</span>
+                        <span className="text-mute">{preview}</span>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div className="text-right text-xs">
+                <div className="text-2xs whitespace-nowrap">
                   {relativeDate(t.last_message_at)}
                 </div>
                 <button
                   type="button"
-                  className="btn label ml-2"
+                  className="btn label"
                   onClick={(e) => deleteThread(e, t.id)}
                   title="delete thread"
                 >

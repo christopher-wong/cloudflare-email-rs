@@ -380,34 +380,50 @@ export async function addPasskey(opts?: { label?: string }): Promise<void> {
   });
 }
 
-// -- Session-scoped priv ----------------------------------------------------
+// -- Persisted priv ---------------------------------------------------------
 //
 // The decrypted X25519 private key lives in `window` memory AND in
-// sessionStorage, so it survives a tab reload (sessionStorage is per-tab
-// and dropped on tab close). The first read after a reload rehydrates the
-// in-memory copy from sessionStorage.
+// localStorage, so it survives:
+// - tab reload
+// - browser close + reopen
+// - opening a new tab in the same browser profile
 //
-// Trade-off: sessionStorage is plaintext on disk for the tab's lifetime.
-// An attacker with file-system access or a malicious browser extension that
-// can read storage could read the key. Versus the old "memory-only" model
-// (where a reload forced re-auth), this is a deliberate UX vs threat-model
-// shift toward UX: it matches what users expect from a session cookie.
-// Logout still zeroes both copies; closing the tab still loses the key.
+// Trade-off — localStorage is plaintext on disk, scoped to the origin.
+// Anyone with file-system access (a snooping roommate, a stolen laptop
+// without disk encryption, or a malicious browser extension that can
+// read storage) can lift the priv. We previously used sessionStorage
+// to bound the exposure to the tab's lifetime, but the resulting UX
+// (re-auth on every browser close) wasn't worth the marginal
+// protection — a determined local attacker can also drop a key
+// logger or steal the still-valid session cookie.
+//
+// Mitigations:
+// - The priv is zeroed in memory on logout and the localStorage entry
+//   is removed.
+// - The same key is *also* wrapped on the server (passkey PRF + recovery
+//   phrase), so revoking access still flows through the server-side
+//   credentials, not the local cache.
+// - Closing the browser without logging out leaves the priv resident.
+//   That's the same threat-model as a browser-saved password manager.
 
 const PRIV_HANDLE = '__cfemail_priv_session__';
 const PRIV_STORAGE_KEY = 'cfemail.priv.b64';
 
+function priv_storage(): Storage | null {
+  try { return window.localStorage; } catch { return null; }
+}
+
 export async function sessionStashPriv(priv: Uint8Array): Promise<void> {
   (window as any)[PRIV_HANDLE] = priv;
   try {
-    sessionStorage.setItem(PRIV_STORAGE_KEY, b64uEncode(priv));
+    priv_storage()?.setItem(PRIV_STORAGE_KEY, b64uEncode(priv));
   } catch { /* storage disabled — fall back to memory-only */ }
 }
 export function sessionPriv(): Uint8Array | null {
   const cached = (window as any)[PRIV_HANDLE] as Uint8Array | undefined;
   if (cached) return cached;
   try {
-    const s = sessionStorage.getItem(PRIV_STORAGE_KEY);
+    const s = priv_storage()?.getItem(PRIV_STORAGE_KEY);
     if (!s) return null;
     const priv = b64uDecode(s);
     (window as any)[PRIV_HANDLE] = priv;
@@ -418,7 +434,7 @@ export function sessionClearPriv(): void {
   const p = (window as any)[PRIV_HANDLE] as Uint8Array | undefined;
   if (p) p.fill(0);
   (window as any)[PRIV_HANDLE] = null;
-  try { sessionStorage.removeItem(PRIV_STORAGE_KEY); } catch { /* ignore */ }
+  try { priv_storage()?.removeItem(PRIV_STORAGE_KEY); } catch { /* ignore */ }
 }
 
 // -- Wire types -------------------------------------------------------------
