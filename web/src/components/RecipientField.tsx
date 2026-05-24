@@ -196,10 +196,16 @@ export default function RecipientField({
         onClick={() => inputRef.current?.focus()}
       >
         {value.map((r, i) => (
+          // Use the project's existing `.chip` style so tags look
+          // visually consistent with labels/addresses elsewhere
+          // (brutalist 1px border, ~11px uppercase, tight padding).
+          // The remove × is a bare inline button with no border —
+          // Tailwind's button reset would otherwise paint one.
           <span
             key={`${r.addr}-${i}`}
-            className="hair-all flex items-center gap-1 bg-[var(--bg-mute,#f5f5f5)] px-2 py-0.5 text-xs"
+            className="chip normal-case"
             title={r.addr}
+            style={{ letterSpacing: 0, gap: '0.375rem' }}
           >
             <span className="max-w-[14rem] truncate">
               {r.name && r.name !== r.addr ? r.name : r.addr}
@@ -207,11 +213,21 @@ export default function RecipientField({
             <button
               type="button"
               aria-label={`remove ${r.addr}`}
-              className="text-mute hover:text-black"
               onMouseDown={(e) => {
                 e.preventDefault();
                 removeAt(i);
               }}
+              style={{
+                border: 0,
+                background: 'transparent',
+                padding: 0,
+                lineHeight: 1,
+                cursor: 'pointer',
+                color: 'inherit',
+                opacity: 0.5,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.5')}
             >
               ×
             </button>

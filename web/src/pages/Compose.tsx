@@ -813,22 +813,17 @@ export default function Compose() {
           close to the keyboard on mobile and out of the way until the
           user actually wants to format. */}
       <div className="hair-t flex flex-wrap items-center gap-1 px-2 py-1">
+        {/* Inline styling stays — bold/italic/strike behave reliably
+            via execCommand. List / blockquote / code / code-block /
+            link were removed because contentEditable + execCommand
+            for block-level formatting is unreliable across browsers
+            (cursor escapes the block, ranges collapse, nesting
+            breaks) and the bugs outweighed the value. Plain text in
+            the message body is fine for now. */}
         <FmtBtn label="B" title="bold" bold onClick={() => cmd('bold')} />
         <FmtBtn label="I" title="italic" italic onClick={() => cmd('italic')} />
         <FmtBtn label="S" title="strikethrough" strike
           onClick={() => cmd('strikeThrough')} />
-        <span className="text-mute mx-1">|</span>
-        <FmtBtn label="• list" title="bulleted list"
-          onClick={() => cmd('insertUnorderedList')} />
-        <FmtBtn label="1. list" title="numbered list"
-          onClick={() => cmd('insertOrderedList')} />
-        <FmtBtn label="❝" title="blockquote"
-          onClick={() => cmd('formatBlock', 'blockquote')} />
-        <span className="text-mute mx-1">|</span>
-        <FmtBtn label="‹ code ›" title="inline code" onClick={() => wrapInline('code')} />
-        <FmtBtn label="block" title="code block"
-          onClick={() => cmd('formatBlock', 'pre')} />
-        <FmtBtn label="link" title="link" onClick={insertLink} />
         <span className="text-mute mx-1">|</span>
         <FmtBtn label={attachingFile ? '⏳ attach' : '📎 attach'}
           title="attach a file"
