@@ -15,7 +15,7 @@ import HtmlMessageFrame from '@/components/HtmlMessageFrame';
 import { marked } from 'marked';
 
 import * as api from '@/lib/api';
-import { b64uDecode, openSealedString } from '@/lib/crypto';
+import { b64uDecode, openSealedBox, openSealedString } from '@/lib/crypto';
 import * as realtime from '@/lib/realtime';
 import { sessionPriv, unlock } from '@/lib/webauthn';
 import { absoluteDate, relativeDate } from '@/lib/time';
@@ -232,7 +232,6 @@ export default function Thread() {
       // back to the raw bytes if it isn't a sealed-box envelope.
       let bytes: Uint8Array;
       try {
-        const { openSealedBox } = await import('@/lib/crypto');
         bytes = openSealedBox(ct, priv);
       } catch {
         bytes = ct;

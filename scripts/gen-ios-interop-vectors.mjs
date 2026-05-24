@@ -117,6 +117,31 @@ const hkdfSalt = new Uint8Array(16).fill(0x04);
 const hkdfInfo = new TextEncoder().encode('cfemail-test');
 const hkdfOutput = hkdf(sha256, hkdfIkm, hkdfSalt, hkdfInfo, 32);
 
+// ---- SecretLinkKDF vector ---------------------------------------------------
+// Derives Argon2id(password="passphrase", salt=0x05*16, default params) then
+// splits with HKDF-SHA256 using the canonical info strings from secret-link.ts.
+const kdfPassword = new TextEncoder().encode('passphrase');
+const kdfSalt = new Uint8Array(16).fill(0x05);
+const kdfArgonOut = argon2id(kdfPassword, kdfSalt, {
+  m: 65536,
+  t: 3,
+  p: 4,
+  dkLen: 32,
+});
+const kdfCheck = hkdf(sha256, kdfArgonOut, undefined, new TextEncoder().encode('cfemail/secret-link/check/v1'), 32);
+const kdfWrapKey = hkdf(sha256, kdfArgonOut, undefined, new TextEncoder().encode('cfemail/secret-link/wrap/v1'), 32);
+
+// Single-chunk ciphertext for the SecretLink CEK-encryption test:
+// AES-GCM(plaintext=CEK, key=kdfWrapKey, iv=0x06*12)
+// We produce this via a synchronous deterministic path using native Node crypto.
+import { createCipheriv } from 'crypto';
+const wrapIv = new Uint8Array(12).fill(0x06);
+const cipher = createCipheriv('aes-256-gcm', Buffer.from(kdfWrapKey), Buffer.from(wrapIv));
+const wrappedCek = Buffer.concat([cipher.update(Buffer.from(CEK)), cipher.final()]);
+const authTag = cipher.getAuthTag();
+// Wire layout: iv(12) || ct(32) || tag(16)
+const passwordWrap = Buffer.concat([Buffer.from(wrapIv), wrappedCek, authTag]);
+
 // ---- assemble JSON ----------------------------------------------------------
 
 const vectors = {
@@ -164,6 +189,24 @@ const vectors = {
     info_utf8: 'cfemail-test',
     length: 32,
     expected_b64: toB64(hkdfOutput),
+  },
+
+  secretLinkKDF: {
+    description: 'password=passphrase, salt=0x05*16, default kdf params',
+    password_utf8: 'passphrase',
+    argon_salt_b64: toB64(kdfSalt),
+    kdf_params: {
+      algorithm: 'argon2id',
+      version: 19,
+      m: 65536,
+      t: 3,
+      p: 4,
+      hash_len: 32,
+    },
+    expected_check_b64: toB64(kdfCheck),
+    expected_wrap_key_b64: toB64(kdfWrapKey),
+    // AES-GCM(cek=0x42*32, wrapKey, iv=0x06*12): iv(12)||ct(32)||tag(16)
+    password_wrap_b64: toB64(passwordWrap),
   },
 };
 

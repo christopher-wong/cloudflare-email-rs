@@ -1,3 +1,14 @@
+// The workers-rs `#[event(scheduled)]` proc-macro expansion calls
+// our async handler and discards the returned Result, which triggers
+// the `unused_must_use` lint at the call site. We log every internal
+// error explicitly inside the handler body so the swallowed
+// top-level result is intentional. An `#[allow]` on the fn doesn't
+// propagate into the macro's generated wrapper, so the suppression
+// goes at the file level here. The other handlers in this file
+// (`fetch`, `email`, `start`) are small enough that we can keep an
+// eye on what gets silenced.
+#![allow(unused_must_use)]
+
 use worker::*;
 
 mod b64;
@@ -35,6 +46,8 @@ async fn email(message: ForwardableEmailMessage, env: Env, ctx: Context) -> Resu
 
 /// Cron handler. Fires on the cadence declared in wrangler.jsonc's
 /// `triggers.crons`. Today's sole job: snapshot every DO into R2.
+/// See the `#![allow(unused_must_use)]` at the top of this file for
+/// why the proc-macro warning is suppressed crate-locally.
 #[event(scheduled)]
 async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> Result<()> {
     if let Err(e) = api::admin::run_backup(&env).await {
