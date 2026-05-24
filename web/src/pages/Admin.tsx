@@ -29,115 +29,8 @@ interface BackupsResp {
   schedule_cron: string;
 }
 
-export default function Admin() {
-  const { state } = useApp();
-  const [invites, setInvites] = useState<Invite[] | null>(null);
-  const [users, setUsers] = useState<AdminUser[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+// ── Helpers ────────────────────────────────────────────────────────
 
-  const refresh = async () => {
-    try {
-      const [i, u] = await Promise.all([
-        api.get<Invite[]>('/api/admin/invites'),
-        api.get<AdminUser[]>('/api/admin/users'),
-      ]);
-      setInvites(i);
-      setUsers(u);
-    } catch (e: any) {
-      setErr(e?.message || 'load failed');
-    }
-  };
-
-  useEffect(() => { void refresh(); }, []);
-
-  const deleteInvite = async (token: string) => {
-    if (!confirm('revoke this invite?')) return;
-    try {
-      await api.del(`/api/admin/invites/${encodeURIComponent(token)}`);
-      await refresh();
-    } catch (e: any) {
-      setErr(e?.message || 'delete failed');
-    }
-  };
-
-  if (!state.me?.is_admin) {
-    return <div className="p-8 text-center label">admin only</div>;
-  }
-  if (err) return <div className="p-8 text-center label">{err}</div>;
-  if (!invites || !users) return <Loader />;
-
-  return (
-    <div className="flex h-full flex-col gap-6 p-4">
-      <Toolbar><span className="label">admin</span></Toolbar>
-
-      <InviteForm domain={state.status?.primary_domain ?? ''} onCreated={refresh} />
-
-      <section className="hair-all">
-        <div className="hair-b label px-3 py-2">invites — pending</div>
-        {invites.length === 0 && (
-          <div className="text-mute p-3 text-sm">no pending invites</div>
-        )}
-        {invites.length > 0 && (
-          <ul>
-            {invites.map((i) => (
-              <li key={i.token} className="hair-b grid grid-cols-[1fr_auto_auto] gap-3 p-3">
-                <div>
-                  <div className="text-xs">
-                    {i.addresses.join(', ')} {i.is_admin && <span className="chip ml-2">ADMIN</span>}
-                  </div>
-                  <div className="text-mute text-2xs mt-1 break-all">
-                    {`${window.location.origin}/enroll?token=${i.token}`}
-                  </div>
-                </div>
-                <button
-                  className="btn label"
-                  onClick={() =>
-                    navigator.clipboard.writeText(
-                      `${window.location.origin}/enroll?token=${i.token}`,
-                    )
-                  }
-                >
-                  copy link
-                </button>
-                <button
-                  className="btn label"
-                  onClick={() => deleteInvite(i.token)}
-                  title="revoke this invite"
-                >
-                  revoke
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <BackupsSection />
-
-      <section className="hair-all">
-        <div className="hair-b label px-3 py-2">users</div>
-        <ul>
-          {users.map((u) => (
-            <li key={u.id} className="hair-b grid grid-cols-[1fr_auto] gap-3 p-3">
-              <div>
-                <div className="font-bold">{u.handle} {u.is_admin && <span className="chip ml-2">ADMIN</span>}</div>
-                <div className="text-mute text-xs">{u.addresses.join(', ') || '(no addresses)'}</div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </div>
-  );
-}
-
-// ──────────────────────────────────────────────────────────────────
-// backups
-// ──────────────────────────────────────────────────────────────────
-
-/// Best-effort cron-to-English. Returns the raw string if the pattern
-/// isn't one of the common shapes we handle, so the user always sees
-/// *something* truthful even if it isn't pretty.
 function describeCron(cron: string): string {
   const parts = cron.trim().split(/\s+/);
   if (parts.length !== 5) return cron;
@@ -161,6 +54,172 @@ function formatBytes(n: number): string {
 function formatTimestamp(ms: number): string {
   return new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
+
+// ── Data table shared header/row classes ──────────────────────────
+
+const TH = 'text-[10.5px] tracking-wider uppercase text-ink-faint font-medium';
+
+// ── Main component ────────────────────────────────────────────────
+
+export default function Admin() {
+  const { state } = useApp();
+  const [invites, setInvites] = useState<Invite[] | null>(null);
+  const [users, setUsers] = useState<AdminUser[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      const [i, u] = await Promise.all([
+        api.get<Invite[]>('/api/admin/invites'),
+        api.get<AdminUser[]>('/api/admin/users'),
+      ]);
+      setInvites(i);
+      setUsers(u);
+    } catch (e: any) {
+      setErr(e?.message || 'load failed');
+    }
+  };
+
+  useEffect(() => { void refresh(); }, []);
+
+  if (!state.me?.is_admin) {
+    return <div className="p-8 text-center text-[13.5px] text-ink-muted">Admin only.</div>;
+  }
+  if (err) return <div className="p-8 text-center text-[13.5px] text-danger">{err}</div>;
+  if (!invites || !users) return <Loader />;
+
+  return (
+    <div className="flex h-full flex-col overflow-y-auto">
+      <Toolbar><span className="eyebrow">system</span></Toolbar>
+
+      <div className="mx-auto w-full max-w-3xl px-10 py-9 flex flex-col gap-5">
+        {/* Page header */}
+        <div>
+          <div className="eyebrow mb-1">system</div>
+          <h1 className="text-[26px] font-semibold tracking-tight text-ink">Admin</h1>
+        </div>
+
+        {/* Create invite card */}
+        <InviteForm domain={state.status?.primary_domain ?? ''} onCreated={refresh} />
+
+        {/* Pending invites card */}
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <div className="text-[13px] font-semibold text-ink">Pending invites</div>
+              <div className="text-[12.5px] text-ink-muted">Links that haven't been claimed yet.</div>
+            </div>
+          </div>
+
+          {invites.length === 0 ? (
+            <div className="px-[18px] py-4 text-[13.5px] text-ink-muted">No pending invites.</div>
+          ) : (
+            <div className="flex flex-col text-[13px]">
+              {/* Header row */}
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3.5 px-[18px] py-2.5 border-b border-border bg-bg">
+                <div className={TH}>Address / handle</div>
+                <div className={TH}>Role</div>
+                <div className={TH}></div>
+                <div className={TH}></div>
+              </div>
+              {invites.map((inv) => (
+                <div
+                  key={inv.token}
+                  className="grid grid-cols-[1fr_auto_auto_auto] gap-3.5 px-[18px] py-3 border-b border-border last:border-0 hover:bg-hover items-center"
+                >
+                  <div>
+                    <div className="text-ink font-medium">{inv.addresses.join(', ')}</div>
+                    {inv.handle && (
+                      <div className="text-[12px] text-ink-faint font-mono mt-0.5">{inv.handle}</div>
+                    )}
+                    <div className="text-[11px] text-ink-faint font-mono mt-0.5 break-all">
+                      {`${window.location.origin}/enroll?token=${inv.token}`}
+                    </div>
+                  </div>
+                  <div>
+                    {inv.is_admin
+                      ? <span className="badge badge-solid">admin</span>
+                      : <span className="badge badge-soft">user</span>}
+                  </div>
+                  <button
+                    className="btn btn-sm"
+                    onClick={() =>
+                      navigator.clipboard.writeText(
+                        `${window.location.origin}/enroll?token=${inv.token}`,
+                      )
+                    }
+                  >
+                    Copy link
+                  </button>
+                  <button
+                    className="btn btn-sm btn-danger"
+                    onClick={async () => {
+                      if (!confirm('Revoke this invite?')) return;
+                      try {
+                        await api.del(`/api/admin/invites/${encodeURIComponent(inv.token)}`);
+                        await refresh();
+                      } catch (e: any) {
+                        setErr(e?.message || 'delete failed');
+                      }
+                    }}
+                  >
+                    Revoke
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Backups card */}
+        <BackupsSection />
+
+        {/* Users card */}
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <div className="text-[13px] font-semibold text-ink">Users</div>
+              <div className="text-[12.5px] text-ink-muted">{users.length} account{users.length !== 1 ? 's' : ''} on this server.</div>
+            </div>
+          </div>
+          <div className="flex flex-col text-[13px]">
+            {/* Header row */}
+            <div className="grid grid-cols-[1fr_auto_auto] gap-3.5 px-[18px] py-2.5 border-b border-border bg-bg">
+              <div className={TH}>User</div>
+              <div className={TH}>Addresses</div>
+              <div className={TH}>Role</div>
+            </div>
+            {users.map((u) => (
+              <div
+                key={u.id}
+                className="grid grid-cols-[1fr_auto_auto] gap-3.5 px-[18px] py-3 border-b border-border last:border-0 hover:bg-hover items-center"
+              >
+                <div>
+                  <div className="font-medium text-ink">{u.handle}</div>
+                  {u.display_name && (
+                    <div className="text-[12px] text-ink-muted">{u.display_name}</div>
+                  )}
+                </div>
+                <div className="text-[12px] text-ink-faint font-mono">
+                  {u.addresses.join(', ') || '—'}
+                </div>
+                <div>
+                  {u.id === state.me?.id
+                    ? <span className="badge badge-soft">this account</span>
+                    : u.is_admin
+                    ? <span className="badge badge-solid">admin</span>
+                    : <span className="text-ink-faint text-[12px]">user</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Backups section ────────────────────────────────────────────────
 
 function BackupsSection() {
   const [data, setData] = useState<BackupsResp | null>(null);
@@ -198,7 +257,7 @@ function BackupsSection() {
     const date = key.replace(/^backups\//, '').slice(0, 10);
     const typed = prompt(`To confirm, type the snapshot date: ${date}`);
     if (typed !== date) {
-      alert('restore cancelled — confirmation did not match');
+      alert('Restore cancelled — confirmation did not match.');
       return;
     }
     setRestoring(key); setErr(null);
@@ -206,77 +265,81 @@ function BackupsSection() {
       const r = await api.post<{ restored_mailboxes: number }>(
         '/api/admin/restore', { key },
       );
-      alert(`restored ${r.restored_mailboxes} mailbox(es). Reload to see fresh data.`);
+      alert(`Restored ${r.restored_mailboxes} mailbox(es). Reload to see fresh data.`);
     } catch (e: any) {
       setErr(e?.message || 'restore failed');
     } finally { setRestoring(null); }
   };
 
   return (
-    <section className="hair-all">
-      <div className="hair-b flex items-center justify-between gap-3 px-3 py-2">
-        <span className="label">backups</span>
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <div className="text-[13px] font-semibold text-ink">Backups</div>
+          <div className="text-[12.5px] text-ink-muted">
+            {data ? describeCron(data.schedule_cron) : 'Loading schedule…'}
+            {data && <span className="ml-2 font-mono text-[11px] text-ink-faint">({data.schedule_cron})</span>}
+          </div>
+        </div>
+        <div className="flex-1" />
         <button
-          className="btn label"
+          className="btn btn-sm"
           disabled={busy}
           onClick={triggerBackup}
-          title="run a backup right now"
         >
-          {busy ? 'backing up…' : 'back up now ▸'}
+          {busy ? 'Backing up…' : 'Back up now'}
         </button>
       </div>
 
-      <div className="hair-b px-3 py-2 text-xs">
-        <span className="text-mute">schedule</span>
-        <span className="ml-2">
-          {data ? describeCron(data.schedule_cron) : '…'}
-        </span>
-        {data && (
-          <code className="text-mute ml-2 text-2xs">({data.schedule_cron})</code>
-        )}
-      </div>
+      {err && (
+        <div className="px-[18px] py-3 text-[13px] text-danger border-b border-border">{err}</div>
+      )}
 
-      {err && <div className="hair-b inv px-3 py-2 text-sm">{err}</div>}
-
-      {!data && <div className="text-mute p-3 text-sm">loading…</div>}
+      {!data && <div className="px-[18px] py-4 text-[13.5px] text-ink-muted">Loading…</div>}
       {data && data.backups.length === 0 && (
-        <div className="text-mute p-3 text-sm">no snapshots yet</div>
+        <div className="px-[18px] py-4 text-[13.5px] text-ink-muted">No snapshots yet.</div>
       )}
       {data && data.backups.length > 0 && (
-        <ul>
+        <div className="flex flex-col text-[13px]">
+          {/* Header row */}
+          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3.5 px-[18px] py-2.5 border-b border-border bg-bg">
+            <div className={TH}>Snapshot</div>
+            <div className={TH}>Size</div>
+            <div className={TH}></div>
+            <div className={TH}></div>
+          </div>
           {data.backups.map((b) => (
-            <li
+            <div
               key={b.key}
-              className="hair-b grid grid-cols-[1fr_auto_auto] items-center gap-3 p-3"
+              className="grid grid-cols-[1fr_auto_auto_auto] gap-3.5 px-[18px] py-3 border-b border-border last:border-0 hover:bg-hover items-center"
             >
               <div>
-                <div className="text-xs">{formatTimestamp(b.uploaded_at)}</div>
-                <div className="text-mute text-2xs mt-1 break-all">
-                  {b.key} · {formatBytes(b.size_bytes)}
-                </div>
+                <div className="font-mono text-[12.5px] text-ink">{formatTimestamp(b.uploaded_at)}</div>
+                <div className="font-mono text-[11px] text-ink-faint mt-0.5 break-all">{b.key}</div>
               </div>
+              <div className="font-mono text-[12.5px] text-ink-muted">{formatBytes(b.size_bytes)}</div>
               <button
-                className="btn label"
+                className="btn btn-sm"
                 onClick={() => navigator.clipboard.writeText(b.key)}
-                title="copy R2 key"
               >
-                copy key
+                Copy key
               </button>
               <button
-                className="btn label"
+                className="btn btn-sm btn-danger"
                 disabled={restoring === b.key}
                 onClick={() => restore(b.key)}
-                title="overwrite live data from this snapshot"
               >
-                {restoring === b.key ? 'restoring…' : 'restore'}
+                {restoring === b.key ? 'Restoring…' : 'Restore'}
               </button>
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
-    </section>
+    </div>
   );
 }
+
+// ── Create invite form ─────────────────────────────────────────────
 
 function InviteForm({ domain, onCreated }: { domain: string; onCreated: () => void }) {
   const [handle, setHandle] = useState('');
@@ -304,45 +367,72 @@ function InviteForm({ domain, onCreated }: { domain: string; onCreated: () => vo
   };
 
   return (
-    <form onSubmit={submit} className="hair-all">
-      <div className="hair-b label px-3 py-2">new invite</div>
-      <div className="field">
-        <div className="field-label">handle</div>
-        <input className="field-value w-full border-0" value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="optional" />
+    <form onSubmit={submit} className="card">
+      <div className="card-head">
+        <div>
+          <div className="text-[13px] font-semibold text-ink">Create invite</div>
+          <div className="text-[12.5px] text-ink-muted">Generate an enrollment link for a new user.</div>
+        </div>
+        <div className="flex-1" />
+        <button type="submit" className="btn btn-sm btn-primary" disabled={busy || !local}>
+          {busy ? 'Creating…' : 'Create invite'}
+        </button>
       </div>
-      <div className="field">
-        <div className="field-label">address</div>
-        <div className="field-value flex w-full items-stretch">
+
+      <div>
+        <div className="field-row">
+          <label className="field-label" htmlFor="inv-handle">Handle</label>
           <input
-            className="w-full border-0"
-            value={local}
-            onChange={(e) => setLocal(e.target.value.toLowerCase().replace(/[^a-z0-9._+-]/g, ''))}
-            required
+            id="inv-handle"
+            className="input"
+            value={handle}
+            onChange={(e) => setHandle(e.target.value)}
+            placeholder="optional"
           />
-          <span className="text-mute self-center pl-2">@{domain}</span>
+        </div>
+        <div className="field-row">
+          <label className="field-label" htmlFor="inv-local">Address</label>
+          <div className="flex items-center gap-1">
+            <input
+              id="inv-local"
+              className="input"
+              value={local}
+              onChange={(e) => setLocal(e.target.value.toLowerCase().replace(/[^a-z0-9._+-]/g, ''))}
+              required
+            />
+            <span className="text-[13.5px] text-ink-muted ml-1">@{domain}</span>
+          </div>
+        </div>
+        <div className="field-row" style={{ borderBottom: 0 }}>
+          <label className="field-label" htmlFor="inv-admin">Admin role</label>
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input
+              id="inv-admin"
+              type="checkbox"
+              className="check"
+              checked={isAdmin}
+              onChange={(e) => setIsAdmin(e.target.checked)}
+            />
+            <span className="text-[13.5px] text-ink-muted">Grant admin role</span>
+          </label>
         </div>
       </div>
-      <div className="field">
-        <div className="field-label">admin</div>
-        <label className="field-value flex items-center gap-2">
-          <input type="checkbox" checked={isAdmin} onChange={(e) => setIsAdmin(e.target.checked)} />
-          <span className="text-xs">grant admin role</span>
-        </label>
-      </div>
-      {err && <div className="hair-t inv px-3 py-2 text-sm">{err}</div>}
+
+      {err && (
+        <div className="px-[18px] py-3 text-[13px] text-danger border-t border-border">{err}</div>
+      )}
       {link && (
-        <div className="hair-t flex items-center justify-between gap-3 p-3 text-xs">
-          <code className="break-all">{link}</code>
-          <button type="button" className="btn label" onClick={() => navigator.clipboard.writeText(link)}>
-            copy
+        <div className="flex items-center justify-between gap-3 px-[18px] py-3 border-t border-border">
+          <code className="text-[11.5px] font-mono text-ink-muted break-all flex-1">{link}</code>
+          <button
+            type="button"
+            className="btn btn-sm flex-shrink-0"
+            onClick={() => navigator.clipboard.writeText(link)}
+          >
+            Copy
           </button>
         </div>
       )}
-      <div className="hair-t flex justify-end p-3">
-        <button type="submit" className="btn btn-primary label" disabled={busy || !local}>
-          {busy ? 'creating…' : 'create invite ▸'}
-        </button>
-      </div>
     </form>
   );
 }

@@ -10,6 +10,7 @@
  */
 
 import { useState } from 'react';
+import { Lock } from 'lucide-react';
 
 export default function RecoveryReveal({
   phrase,
@@ -40,33 +41,49 @@ export default function RecoveryReveal({
   };
 
   return (
-    <div className="hair-all">
-      <div className="hair-b label px-3 py-2">recovery phrase</div>
-
-      <div className="p-4">
-        <p className="text-sm">
-          This is the <strong>only</strong> way to recover access if you lose
-          your passkey. The server doesn't have it. We won't show it again.
-          Write it down or store it in a password manager <em>before</em>{' '}
-          continuing.
-        </p>
+    <div className="card shadow-pop animate-in fade-in zoom-in-95 duration-150">
+      {/* Card head */}
+      <div className="card-head">
+        <div className="flex-1">
+          <div className="eyebrow mb-1">recovery phrase</div>
+          <h2 className="text-[17px] font-semibold text-ink">Write this down</h2>
+        </div>
+        <span className="pill">
+          <Lock size={11} />
+          encrypted
+        </span>
       </div>
 
-      <div className="hair-t hair-b relative">
-        <div className="grid grid-cols-3 gap-0">
+      {/* Warning callout */}
+      <div
+        className="mx-[18px] my-4 rounded-md border px-4 py-3 text-[13px] leading-relaxed"
+        style={{
+          background: 'var(--accent-soft)',
+          borderColor: 'color-mix(in oklch, var(--accent) 25%, transparent)',
+          color: 'var(--accent-ink)',
+        }}
+      >
+        This is the <strong>only</strong> way to recover access if you lose
+        your passkey. The server doesn't have it and won't show it again.
+        Save it in a password manager or write it down <em>before</em> continuing.
+      </div>
+
+      {/* Word grid */}
+      <div className="relative mx-[18px] mb-4 rounded-md border border-border overflow-hidden bg-bg">
+        <div className="grid grid-cols-3">
           {words.map((w, i) => (
             <div
               key={i}
               className={
-                'flex items-baseline gap-2 px-3 py-2 ' +
-                (i % 3 !== 2 ? 'hair-r ' : '') +
-                (i < 9 ? 'hair-b ' : '')
+                'flex items-baseline gap-2 px-4 py-2.5 ' +
+                (i % 3 !== 2 ? 'border-r border-border ' : '') +
+                (i < words.length - 3 ? 'border-b border-border ' : '')
               }
             >
-              <span className="text-mute w-6 text-right text-2xs">
+              <span className="text-ink-faint text-[11px] font-mono w-5 text-right flex-shrink-0">
                 {String(i + 1).padStart(2, '0')}
               </span>
-              <span className="font-bold">
+              <span className="font-mono text-[13px] font-medium text-ink">
                 {revealed ? w : '••••••'}
               </span>
             </div>
@@ -75,56 +92,60 @@ export default function RecoveryReveal({
         {!revealed && (
           <button
             type="button"
-            className="absolute inset-0 flex items-center justify-center bg-paper/95 label"
+            className="absolute inset-0 flex items-center justify-center bg-bg/95 text-[13px] font-medium text-ink-muted hover:text-ink transition-colors"
             onClick={() => setRevealed(true)}
           >
-            tap to reveal ▸
+            Tap to reveal
           </button>
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-2 p-3">
-        <div className="flex gap-2">
-          <button
-            type="button"
-            className="btn label"
-            disabled={!revealed}
-            onClick={() => navigator.clipboard.writeText(phrase)}
-          >
-            copy
-          </button>
-          <button
-            type="button"
-            className="btn label"
-            disabled={!revealed}
-            onClick={download}
-          >
-            download .txt
-          </button>
-        </div>
-      </div>
-
-      <label className="hair-t flex items-center gap-2 px-3 py-2 text-sm">
-        <input
-          type="checkbox"
-          checked={acknowledged}
-          onChange={(e) => setAcknowledged(e.target.checked)}
-          disabled={!revealed}
-        />
-        <span>
-          i've saved this phrase. i understand losing it AND my passkey means
-          losing access to my mail forever.
-        </span>
-      </label>
-
-      <div className="hair-t flex justify-end p-3">
+      {/* Copy / download actions */}
+      <div className="flex gap-2 px-[18px] pb-4">
         <button
           type="button"
-          className="btn btn-primary label"
+          className="btn btn-sm"
+          disabled={!revealed}
+          onClick={() => navigator.clipboard.writeText(phrase)}
+        >
+          Copy
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          disabled={!revealed}
+          onClick={download}
+        >
+          Download .txt
+        </button>
+      </div>
+
+      {/* Acknowledgement checkbox */}
+      <div className="border-t border-border px-[18px] py-4">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            className="check mt-0.5 flex-shrink-0"
+            checked={acknowledged}
+            onChange={(e) => setAcknowledged(e.target.checked)}
+            disabled={!revealed}
+          />
+          <span className="text-[13px] text-ink-muted leading-relaxed">
+            I've saved this phrase. I understand that losing it <em>and</em> my
+            passkey means permanently losing access to my mail.
+          </span>
+        </label>
+      </div>
+
+      {/* Continue button */}
+      <div className="flex justify-end px-[18px] pb-[18px]">
+        <button
+          type="button"
+          className="btn btn-primary"
           disabled={!acknowledged}
           onClick={onContinue}
         >
-          continue to inbox ▸
+          Continue to inbox
         </button>
       </div>
     </div>

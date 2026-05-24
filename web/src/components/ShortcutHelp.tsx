@@ -13,32 +13,32 @@ interface Row {
 
 const GROUPS: { title: string; rows: Row[] }[] = [
   {
-    title: 'global',
+    title: 'Global',
     rows: [
-      { keys: ['⌘', 'K'], desc: 'open command palette' },
-      { keys: ['Ctrl', 'K'], desc: 'open command palette (windows/linux)' },
-      { keys: ['?'], desc: 'show this help' },
-      { keys: ['c'], desc: 'compose new email' },
-      { keys: ['['], desc: 'toggle sidebar' },
-      { keys: ['Esc'], desc: 'close dialog / drawer' },
+      { keys: ['⌘', 'K'], desc: 'Open command palette' },
+      { keys: ['Ctrl', 'K'], desc: 'Open command palette (Windows / Linux)' },
+      { keys: ['?'], desc: 'Show this help' },
+      { keys: ['c'], desc: 'Compose new email' },
+      { keys: ['['], desc: 'Toggle sidebar' },
+      { keys: ['Esc'], desc: 'Close dialog / drawer' },
     ],
   },
   {
-    title: 'navigate',
+    title: 'Navigate',
     rows: [
-      { keys: ['g', 'i'], desc: 'go to inbox' },
-      { keys: ['g', 'd'], desc: 'go to drafts' },
-      { keys: ['g', 's'], desc: 'go to sent' },
-      { keys: ['g', 'l'], desc: 'go to labels' },
-      { keys: ['g', ','], desc: 'go to settings' },
+      { keys: ['g', 'i'], desc: 'Go to inbox' },
+      { keys: ['g', 'd'], desc: 'Go to drafts' },
+      { keys: ['g', 's'], desc: 'Go to sent' },
+      { keys: ['g', 'l'], desc: 'Go to labels' },
+      { keys: ['g', ','], desc: 'Go to settings' },
     ],
   },
   {
-    title: 'list view',
+    title: 'List view',
     rows: [
-      { keys: ['j'], desc: 'next row' },
-      { keys: ['k'], desc: 'previous row' },
-      { keys: ['Enter'], desc: 'open selected thread' },
+      { keys: ['j'], desc: 'Next row' },
+      { keys: ['k'], desc: 'Previous row' },
+      { keys: ['Enter'], desc: 'Open selected thread' },
     ],
   },
 ];
@@ -63,45 +63,56 @@ export default function ShortcutHelp({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label="keyboard shortcuts"
     >
+      {/* Scrim */}
       <div
-        className="absolute inset-0"
-        style={{ background: 'rgba(0,0,0,0.4)' }}
+        className="scrim"
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative z-10 mx-3 max-h-[80vh] w-full max-w-md overflow-y-auto bg-paper hair-all">
-        <div className="hair-b flex items-center justify-between px-3 py-2">
-          <span className="label">keyboard shortcuts</span>
-          <button className="btn-ghost btn label" onClick={onClose}>
-            close
-          </button>
-        </div>
-        <div className="px-3 py-2">
-          {GROUPS.map((g) => (
-            <section key={g.title} className="mb-3 last:mb-0">
-              <div className="label text-mute mb-1">{g.title}</div>
-              <ul>
-                {g.rows.map((r, i) => (
-                  <li
-                    key={i}
-                    className="grid grid-cols-[auto_1fr] items-center gap-3 py-1"
-                  >
-                    <span className="flex items-center gap-1">
-                      {r.keys.map((k, j) => (
-                        <span key={j} className="kbd">{k}</span>
-                      ))}
-                    </span>
-                    <span className="text-sm">{r.desc}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
+
+      {/* Panel */}
+      <div className="relative z-50 w-full max-w-[440px] animate-zoom-in">
+        <div className="card shadow-pop">
+          {/* Header */}
+          <div className="card-head justify-between">
+            <h2 className="text-[15px] font-semibold text-ink">Keyboard shortcuts</h2>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={onClose}
+            >
+              Close
+            </button>
+          </div>
+
+          {/* Shortcut rows */}
+          <div className="card-body max-h-[60vh] overflow-y-auto">
+            {GROUPS.map((g) => (
+              <section key={g.title} className="mb-5 last:mb-0">
+                <div className="eyebrow mb-2">{g.title}</div>
+                <ul className="flex flex-col gap-0.5">
+                  {g.rows.map((r, i) => (
+                    <li
+                      key={i}
+                      className="grid grid-cols-[auto_1fr] items-center gap-4 py-1.5"
+                    >
+                      <span className="flex items-center gap-1 min-w-[60px]">
+                        {r.keys.map((k, j) => (
+                          <span key={j} className="kbd">{k}</span>
+                        ))}
+                      </span>
+                      <span className="text-[13px] text-ink-muted">{r.desc}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
         </div>
       </div>
     </div>

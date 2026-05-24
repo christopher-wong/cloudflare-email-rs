@@ -1,9 +1,9 @@
 /**
  * Tag-style email recipient input with contact autocomplete.
  *
- * Powers the to/cc/bcc fields in Compose. Recipients render as tags
- * (with display name + ✕) and an inline input lets the user type the
- * next one. A dropdown surfaces matching contacts as they type.
+ * Powers the to/cc/bcc fields in Compose. Recipients render as .chip tags
+ * (with display name + ×) and an inline input lets the user type the next
+ * one. A card+shadow-pop dropdown surfaces matching contacts.
  *
  * Selection model:
  *   - Each recipient is `{addr, name?}`. `addr` is what gets sent;
@@ -40,22 +40,12 @@ export interface Recipient {
 }
 
 export interface RecipientFieldProps {
-  /** Field label rendered in the gutter ("to", "cc", "bcc"). */
   label: string;
-  /** Current tag list. */
   value: Recipient[];
-  /** Called with the new tag list after any add/remove. */
   onChange: (next: Recipient[]) => void;
-  /** Form `required` semantics — we set aria-required and refuse blur-
-   *  commit of an empty input when this is true and the list is empty. */
   required?: boolean;
-  /** Placeholder for the inline input when there are no tags yet. */
   placeholder?: string;
-  /** Authenticated user's addresses — filtered out of suggestions so
-   *  the user doesn't get themselves. */
   myAddresses?: string[];
-  /** Show suggestion dropdown? Off by default for bcc (less common
-   *  use) but on for to/cc. */
   autocomplete?: boolean;
 }
 
@@ -76,13 +66,12 @@ export default function RecipientField({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { contacts } = useContacts(myAddresses);
 
-  // Filter out contacts already in the tag list — once the user has
-  // picked someone, don't keep suggesting them.
   const alreadyAdded = useMemo(() => {
     const s = new Set<string>();
     for (const r of value) s.add(r.addr.toLowerCase());
     return s;
   }, [value]);
+
   const suggestions = useMemo(() => {
     if (!autocomplete) return [];
     return filterContacts(contacts, buffer).filter(
@@ -90,7 +79,6 @@ export default function RecipientField({
     );
   }, [autocomplete, contacts, buffer, alreadyAdded]);
 
-  // Reset highlight when the suggestion list shrinks past it.
   useEffect(() => {
     if (highlight >= suggestions.length) {
       setHighlight(Math.max(0, suggestions.length - 1));
@@ -110,13 +98,9 @@ export default function RecipientField({
     if (!looksLikeEmail(addr)) return false;
     const lower = addr.toLowerCase();
     if (alreadyAdded.has(lower)) {
-      // Already present — just clear the buffer.
       setBuffer('');
       return true;
     }
-    // If the typed string matches a known contact's email (case-
-    // insensitive), promote to the contact-with-name version. Lets
-    // the user pasting "christopher@…" still get the display name.
     const match = contacts.find((c) => c.addr.toLowerCase() === lower);
     onChange([
       ...value,
@@ -166,8 +150,6 @@ export default function RecipientField({
     }
     if (e.key === 'Backspace' && buffer === '' && value.length > 0) {
       e.preventDefault();
-      // Pop the last tag back into the buffer so the user can edit it
-      // rather than re-typing the whole thing.
       const last = value[value.length - 1];
       onChange(value.slice(0, -1));
       setBuffer(last.addr);
@@ -176,8 +158,6 @@ export default function RecipientField({
   };
 
   const onBlur = (_e: FocusEvent<HTMLInputElement>) => {
-    // Defer the close so a click inside the dropdown isn't pre-empted
-    // by a blur of the input.
     window.setTimeout(() => setOpen(false), 120);
     if (buffer.trim()) commitRaw(buffer);
   };
@@ -189,45 +169,33 @@ export default function RecipientField({
   };
 
   return (
-    <div className="field relative">
-      <div className="field-label">{label}</div>
+    <div className="relative flex items-start gap-3 border-b border-border px-5 py-2.5">
+      {/* Field label */}
+      <label className="w-10 shrink-0 pt-[3px] text-[12px] text-ink-faint">{label}</label>
+
+      {/* Tags + input */}
       <div
-        className="field-value flex w-full flex-wrap items-center gap-1 border-0"
+        className="flex flex-1 flex-wrap items-center gap-1.5"
         onClick={() => inputRef.current?.focus()}
       >
         {value.map((r, i) => (
-          // Use the project's existing `.chip` style so tags look
-          // visually consistent with labels/addresses elsewhere
-          // (brutalist 1px border, ~11px uppercase, tight padding).
-          // The remove × is a bare inline button with no border —
-          // Tailwind's button reset would otherwise paint one.
           <span
             key={`${r.addr}-${i}`}
-            className="chip normal-case"
+            className="chip"
             title={r.addr}
-            style={{ letterSpacing: 0, gap: '0.375rem' }}
           >
-            <span className="max-w-[14rem] truncate">
+            <span className="max-w-[14rem] truncate font-mono text-[12px]">
               {r.name && r.name !== r.addr ? r.name : r.addr}
             </span>
             <button
               type="button"
-              aria-label={`remove ${r.addr}`}
+              aria-label={`Remove ${r.addr}`}
+              className="text-ink-faint transition-colors hover:text-ink"
+              style={{ lineHeight: 1, background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
               onMouseDown={(e) => {
                 e.preventDefault();
                 removeAt(i);
               }}
-              style={{
-                border: 0,
-                background: 'transparent',
-                padding: 0,
-                lineHeight: 1,
-                cursor: 'pointer',
-                color: 'inherit',
-                opacity: 0.5,
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.5')}
             >
               ×
             </button>
@@ -235,7 +203,7 @@ export default function RecipientField({
         ))}
         <input
           ref={inputRef}
-          className="min-w-[10rem] flex-1 border-0 bg-transparent focus:outline-none"
+          className="min-w-[8rem] flex-1 bg-transparent text-[13.5px] text-ink outline-none placeholder:text-ink-faint"
           type="text"
           value={buffer}
           aria-required={required}
@@ -251,9 +219,10 @@ export default function RecipientField({
         />
       </div>
 
+      {/* Autocomplete popover — card + shadow-pop pattern */}
       {open && suggestions.length > 0 && (
         <ul
-          className="hair-all absolute left-[6rem] right-0 top-full z-20 mt-0.5 max-h-72 overflow-y-auto bg-white shadow-md"
+          className="card shadow-pop absolute left-[4.5rem] right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto"
           role="listbox"
         >
           {suggestions.map((c, i) => (
@@ -261,21 +230,20 @@ export default function RecipientField({
               key={c.addr}
               role="option"
               aria-selected={i === highlight}
-              className={
-                'cursor-pointer px-2 py-1 text-sm ' +
-                (i === highlight ? 'inv' : 'hover:bg-[var(--bg-mute,#f5f5f5)]')
-              }
-              // Use onMouseDown so the click fires BEFORE the input's
-              // blur — otherwise the dropdown would close first.
+              className={[
+                'cursor-pointer px-3 py-2 transition-colors duration-[120ms]',
+                i === highlight ? 'bg-accent-soft text-accent-ink' : 'hover:bg-hover',
+                i < suggestions.length - 1 ? 'border-b border-border' : '',
+              ].join(' ')}
               onMouseDown={(e) => {
                 e.preventDefault();
                 commitContact(c);
               }}
               onMouseEnter={() => setHighlight(i)}
             >
-              <div className="font-medium">{contactDisplayName(c)}</div>
+              <div className="text-[13px] font-medium text-ink">{contactDisplayName(c)}</div>
               {c.name && c.name !== c.addr && (
-                <div className="text-mute text-xs">{c.addr}</div>
+                <div className="font-mono text-[11.5px] text-ink-muted">{c.addr}</div>
               )}
             </li>
           ))}
@@ -286,8 +254,5 @@ export default function RecipientField({
 }
 
 function looksLikeEmail(s: string): boolean {
-  // Intentionally permissive — Compose's existing inputs allowed any
-  // text and let the worker validate. We just want to refuse obvious
-  // junk like a stray period.
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }

@@ -8,7 +8,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-import Toolbar from '@/components/Toolbar';
 import RecipientField, { type Recipient } from '@/components/RecipientField';
 import { invalidateContacts } from '@/lib/contacts';
 import * as api from '@/lib/api';
@@ -35,24 +34,14 @@ interface Attachment {
   size_bytes: number;
 }
 
-/** Files large enough to bounce as inline MIME (~10 MiB+) get
- *  encrypted client-side and uploaded as `hosted/...` instead. The
- *  CEK lives only in the URL fragment of the share link the sender
- *  emails out, so the server never sees plaintext. */
 interface HostedAttachment {
-  /** Locally unique per draft — used by the UI to remove a row. */
   id: string;
   filename: string;
   mime: string;
   plaintext_size: number;
-  /** Output of `uploadHostedFile`. */
   prepared: hosted.PreparedHostedFile;
 }
 
-/** Any file ≥ this many plaintext bytes goes hosted (E2E, link in body)
- *  instead of inline MIME. Small enough to keep most emails inline,
- *  big enough that we don't force users through the hosted flow for
- *  no real reason. */
 const HOSTED_THRESHOLD_BYTES = 10 * 1024 * 1024;
 
 interface ReplyState {
@@ -62,9 +51,6 @@ interface ReplyState {
   references?: string;
   to?: string[];
   subject?: string;
-  /** Resuming an existing draft (e.g. clicked from /drafts). When
-   *  present, Compose uses this as both the server draftId and the
-   *  IDB hosted-state key so refresh restores hosted attachments. */
   draftId?: string;
 }
 
@@ -76,10 +62,6 @@ export default function Compose() {
 
   const myAddresses = state.me?.addresses ?? [];
   const [from, setFrom] = useState(myAddresses[0] ?? '');
-  // to/cc/bcc are tag-style: each entry has the raw address plus an
-  // optional display name (populated from the contact list when the
-  // user picks a suggestion). Send/serialization uses `addr`; the
-  // `name` is purely UI.
   const [to, setTo] = useState<Recipient[]>(
     () => (rs.to ?? []).map((a) => ({ addr: a })),
   );
@@ -89,30 +71,16 @@ export default function Compose() {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // Generate the draft id up front so it can double as the IDB key
-  // for hosted-attachment recovery from the very first file pick. If
-  // we're resuming an existing draft (clicked from /drafts), reuse
-  // the server's id. The server upserts at whatever id we supply, so
-  // round-tripping a client-minted id is safe.
   const [draftId, setDraftId] = useState<string>(
     () => rs.draftId ?? `drft_${crypto.randomUUID().replace(/-/g, '')}`,
   );
-  // No-op setter retained for parity with the old shape — autosave
-  // writes back whatever the server returns; if a server ever
-  // rewrites our supplied id we'd want to know.
   void setDraftId;
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [hostedAttachments, setHostedAttachments] = useState<HostedAttachment[]>([]);
-  /** One CEK per draft — generated lazily on the first hosted-eligible
-   *  attachment, persisted to IndexedDB so a refresh / tab reload
-   *  doesn't strand the ciphertext on R2 without a key. */
   const hostedCekRef = useRef<Uint8Array | null>(null);
   const [hostedHydrated, setHostedHydrated] = useState(false);
 
-  // Hydrate hosted state from IDB on mount. Runs once; we don't
-  // re-read on every draftId change because draftId is generated
-  // once at mount and doesn't move.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -133,19 +101,15 @@ export default function Compose() {
           })),
         );
       } catch {
-        /* IDB unavailable or schema mismatch — ignore */
+        /* IDB unavailable or schema mismatch */
       } finally {
         if (!cancelled) setHostedHydrated(true);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist hosted state on every change. Runs only after hydration
-  // so we don't clobber a saved draft on the first render.
   useEffect(() => {
     if (!hostedHydrated) return;
     if (!hostedCekRef.current && hostedAttachments.length === 0) {
@@ -153,7 +117,7 @@ export default function Compose() {
       return;
     }
     if (!hostedCekRef.current) return;
-    const state: DraftHostedState = {
+    const st: DraftHostedState = {
       cek_b64: encodeB64(hostedCekRef.current),
       files: hostedAttachments.map((a) => ({
         id: a.id,
@@ -163,15 +127,12 @@ export default function Compose() {
         prepared: a.prepared,
       })),
     };
-    void putDraftHosted(draftId, state);
+    void putDraftHosted(draftId, st);
   }, [hostedHydrated, hostedAttachments, draftId]);
+
   const [attachingFile, setAttachingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Secret-link mode — when enabled, on Send we encrypt subject/body/atts
-  // with a password-derived key, store the ciphertext server-side, and the
-  // outbound email body is replaced with a link + hint. See
-  // `web/src/lib/secret-link.ts` and `worker/src/api/secret.rs`.
   const [secretMode, setSecretMode] = useState(false);
   const [secretPassword, setSecretPassword] = useState('');
   const [secretPasswordConfirm, setSecretPasswordConfirm] = useState('');
@@ -180,12 +141,10 @@ export default function Compose() {
 
   const myPub = useMemo(() => {
     if (!state.me?.pub_key_b64) return null;
-    try {
-      return b64uDecode(state.me.pub_key_b64);
-    } catch { return null; }
+    try { return b64uDecode(state.me.pub_key_b64); }
+    catch { return null; }
   }, [state.me?.pub_key_b64]);
 
-  // Auto-save draft (debounced).
   useEffect(() => {
     if (!myPub) return;
     const handle = setTimeout(async () => {
@@ -201,45 +160,24 @@ export default function Compose() {
           body_ct_b64: body ? b64uEncode(sealToSelf(utf8(body), myPub)) : null,
           attachments: [],
         };
-        const r = await api.post<{ id: string; updated_at: number }>(
-          '/api/drafts',
-          payload,
-        );
+        const r = await api.post<{ id: string; updated_at: number }>('/api/drafts', payload);
         setDraftId(r.id);
         setSavedAt(r.updated_at);
-      } catch { /* silent — autosave is best-effort */ }
+      } catch { /* silent */ }
     }, 1500);
     return () => clearTimeout(handle);
   }, [subject, body, to, cc, bcc, draftId, myPub]);
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  // Tell Chromium to wrap new paragraphs in <p> instead of <div>. Combined
-  // with the lazy-seed in cmd() below, this makes formatBlock + list
-  // commands behave consistently the first time the user clicks one.
   useEffect(() => {
     try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch {}
   }, []);
 
-  /**
-   * Run a formatting command against the contentEditable selection, then
-   * sync our React-side `body` to the resulting innerHTML so autosave and
-   * send see the latest state. document.execCommand is deprecated on
-   * paper but remains the only cross-browser way to mutate a
-   * contentEditable selection with native undo/redo support.
-   */
   const cmd = (name: string, value?: string) => {
     const el = bodyRef.current;
     if (!el) return;
     el.focus();
-
-    // Block-level commands (lists, blockquote, code-block) need an
-    // existing block ancestor for the cursor; Chrome silently no-ops if
-    // the editable has only raw text nodes. Seed one lazily — wrap
-    // whatever is in the editable in a <p> and move the cursor to its
-    // end before invoking. This keeps the editable's HTML clean for
-    // people who never use formatting (we don't pre-seed an empty <p>
-    // on mount).
     if (BLOCK_COMMANDS.has(name) && !el.querySelector(BLOCK_TAGS)) {
       const p = document.createElement('p');
       while (el.firstChild) p.appendChild(el.firstChild);
@@ -254,27 +192,14 @@ export default function Compose() {
         sel.addRange(r);
       }
     }
-
-    // formatBlock specifically wants the value wrapped in angle brackets
-    // across browser engines (`<blockquote>`, not `blockquote`). Other
-    // commands take their value as-is (createLink → URL string).
     const arg =
       name === 'formatBlock' && value
         ? `<${value.replace(/[<>]/g, '')}>`
         : value;
-    try {
-      document.execCommand(name, false, arg);
-    } catch { /* ignore — some browsers throw for unsupported commands */ }
+    try { document.execCommand(name, false, arg); } catch {}
     setBody(el.innerHTML);
   };
 
-  /**
-   * Wrap the current selection (or, with a collapsed cursor, an empty
-   * inline tag containing a zero-width space) so the user can type into
-   * the wrapped region. execCommand('insertHTML', '<code>code</code>')
-   * — the previous implementation — literally wrote the word "code" as
-   * placeholder text, which is what the user saw.
-   */
   const wrapInline = (tag: 'code') => {
     const el = bodyRef.current;
     if (!el) return;
@@ -282,23 +207,16 @@ export default function Compose() {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
     const range = sel.getRangeAt(0);
-
     if (!range.collapsed) {
       const node = document.createElement(tag);
       node.appendChild(range.extractContents());
       range.insertNode(node);
-      // Put the caret right after the new wrap so the user can keep
-      // typing in non-code formatting.
       const after = document.createRange();
       after.setStartAfter(node);
       after.collapse(true);
       sel.removeAllRanges();
       sel.addRange(after);
     } else {
-      // Empty cursor — insert <tag>​</tag> and place the caret
-      // *inside* the tag so subsequent keystrokes extend it. The ZWS
-      // is necessary because empty inline elements collapse out of
-      // contentEditable rendering.
       const node = document.createElement(tag);
       const zws = document.createTextNode('​');
       node.appendChild(zws);
@@ -311,28 +229,20 @@ export default function Compose() {
     }
     setBody(el.innerHTML);
   };
+  void wrapInline;
 
   const insertLink = () => {
     const url = prompt('url') ?? '';
     if (!url) return;
     cmd('createLink', url);
   };
+  void insertLink;
 
-  /**
-   * Upload selected files as attachments. Bytes go to /api/attachments
-   * as-is (plaintext) so outbound MIME can include them when the user
-   * hits Send. The filename is also sealed-to-self and uploaded so the
-   * sender's at-rest copy stores it encrypted — the recipient sees the
-   * plaintext filename in MIME, but our DO row stores ciphertext.
-   */
   const uploadFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setAttachingFile(true);
     try {
       for (const file of Array.from(files)) {
-        // Per-file routing: small files go inline MIME (`attach`), big
-        // ones go E2E-encrypted hosted with the CEK that'll appear in
-        // the share link's URL fragment.
         if (file.size >= HOSTED_THRESHOLD_BYTES) {
           if (!hostedCekRef.current) {
             hostedCekRef.current = hosted.newHostedCek();
@@ -357,7 +267,6 @@ export default function Compose() {
           ]);
           continue;
         }
-
         const filenameCt = myPub
           ? b64uEncode(sealToSelf(utf8(file.name), myPub))
           : null;
@@ -390,17 +299,13 @@ export default function Compose() {
     }
   };
 
-  /** Drop a hosted attachment locally. The R2 ciphertext stays until
-   *  the daily orphan sweep — there's no per-blob delete endpoint yet
-   *  (the hosted_downloads row owns lifecycle once /api/hosted/create
-   *  runs, and we don't call create until send). */
   const removeHostedAttachment = (id: string) => {
     setHostedAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
   const removeAttachment = async (att: Attachment) => {
     setAttachments((prev) => prev.filter((a) => a.id !== att.id));
-    try { await api.del(`/api/attachments/${encodeURIComponent(att.id)}`); } catch { /* ignore */ }
+    try { await api.del(`/api/attachments/${encodeURIComponent(att.id)}`); } catch {}
   };
 
   const send = async (e: FormEvent) => {
@@ -408,30 +313,14 @@ export default function Compose() {
     setBusy(true);
     setErr(null);
     try {
-      // body is the contentEditable's innerHTML. Send the HTML directly
-      // for HTML-capable clients, and derive a readable text/plain
-      // fallback so legacy clients still get something sensible. No
-      // sanitization needed here — recipients' mail clients sandbox HTML,
-      // and the source is the user's own keystrokes.
       const html = body.trim().length > 0 ? body : null;
       const text = html ? htmlToPlainText(html) : '';
-
       const recipients = to.map((r) => r.addr);
       let bodyText = text;
       let bodyHtml = html;
 
-      // E2E hosted attachments: if the user added any oversize files,
-      // mint a hosted_downloads row with the encrypted metadata, then
-      // splice the share link into the outbound body. The URL fragment
-      // (the CEK) never reaches the server — the recipient's browser
-      // reads it from location.hash to decrypt.
       if (hostedAttachments.length > 0 && hostedCekRef.current) {
         const cek = hostedCekRef.current;
-        // Seal CEK to sender's own X25519 pubkey so the /hosted
-        // dashboard can re-decrypt later without keeping the URL
-        // fragment around. Skipped silently if we don't have a
-        // pubkey on hand — re-view simply won't work, the recipient
-        // path still does.
         const senderWrap = myPub ? b64uEncode(sealToSelf(cek, myPub)) : undefined;
         const created = await hosted.createHostedLink({
           files: hostedAttachments.map((a) => a.prepared),
@@ -445,10 +334,7 @@ export default function Compose() {
         });
         const shareUrl = hosted.buildShareUrl(created.url_prefix, cek);
         const senderLabel = state.me?.display_name || from;
-        const totalBytes = hostedAttachments.reduce(
-          (n, a) => n + a.plaintext_size,
-          0,
-        );
+        const totalBytes = hostedAttachments.reduce((n, a) => n + a.plaintext_size, 0);
         const fileLines = hostedAttachments
           .map((a) => `  • ${a.filename} (${formatBytesShort(a.plaintext_size)})`)
           .join('\n');
@@ -478,17 +364,12 @@ export default function Compose() {
         bodyHtml = (bodyHtml ?? '') + blurbHtml;
       }
 
-      // Secret mode replaces the outbound payload entirely: the actual
-      // subject/body/attachments are encrypted client-side and stored on
-      // our server keyed by a password the sender shares out-of-band. The
-      // email itself only carries a link + optional hint.
       if (secretMode) {
         if (!secretPassword) throw new Error('set a password for the secret link');
         if (secretPassword !== secretPasswordConfirm)
           throw new Error('password and confirmation do not match');
         if (recipients.length !== 1)
           throw new Error('secret links go to exactly one recipient');
-        // Pre-flight size caps, mirroring the worker's enforced limits.
         const totalAttachBytes = attachments.reduce((n, a) => n + a.size_bytes, 0);
         const oversized = attachments.find(
           (a) => a.size_bytes > secretLink.SECRET_MAX_PER_ATTACHMENT_BYTES,
@@ -507,11 +388,6 @@ export default function Compose() {
             )} per-link cap`,
           );
         }
-
-        // Pull attachment plaintexts back from R2. Each was uploaded above
-        // through the regular attachments path; for the secret link we
-        // need raw bytes again so we can re-encrypt + re-upload through
-        // the chunked secret-link path. /api/attachments/:id streams.
         const attsPlain: secretLink.SecretAttachmentInput[] = [];
         for (const a of attachments) {
           const resp = await api.rawFetch('GET', `/api/attachments/${encodeURIComponent(a.id)}`, '');
@@ -519,27 +395,16 @@ export default function Compose() {
           const bytes = new Uint8Array(await resp.arrayBuffer());
           attsPlain.push({ filename: a.filename, mime: a.mime, bytes });
         }
-
         const payload = await secretLink.prepareCreateRequest({
           password: secretPassword,
           subject,
-          // Use the HTML body if there is one; otherwise plaintext. The
-          // viewer renders HTML in a sandboxed surface.
           body: html ?? text,
           attachments: attsPlain,
           recipient: recipients[0],
           hint: secretHint || null,
           policy: secretPolicy,
         });
-
-        const created = await api.post<{ token: string; url: string }>(
-          '/api/secret/create',
-          payload,
-        );
-
-        // Outbound email body: link + optional hint, in both plaintext
-        // and a minimal HTML alternative. No attachments — they live
-        // inside the link.
+        const created = await api.post<{ token: string; url: string }>('/api/secret/create', payload);
         const senderLabel = state.me?.display_name || from;
         const hintLine = secretHint ? `\n\nPassword hint: ${secretHint}` : '';
         const linkText =
@@ -553,9 +418,6 @@ export default function Compose() {
           `<p>You'll need the password we agreed on.` +
           (secretHint ? ` <em>Hint:</em> ${escapeHtml(secretHint)}` : '') +
           `</p>`;
-        // Delete the staged plaintext attachments now that the encrypted
-        // copies are persisted on the secret-link row — we don't want
-        // them lingering in the user's mailbox unattached.
         for (const a of attachments) {
           try { await api.del(`/api/attachments/${encodeURIComponent(a.id)}`); } catch {}
         }
@@ -597,16 +459,10 @@ export default function Compose() {
           mime: a.mime,
         })),
       });
-      // Invalidate the contact cache so the next typeahead reflects
-      // this send (any new recipient is now a known contact).
       void invalidateContacts();
       if (draftId) {
         try { await api.del(`/api/drafts/${draftId}`); } catch {}
       }
-      // Hosted-attachment row is committed server-side now — drop the
-      // local IDB copy so a future Compose mount at this draftId
-      // (extremely unlikely; UUIDs don't recycle) doesn't hydrate
-      // stale hosted state.
       void deleteDraftHosted(draftId);
       hostedCekRef.current = null;
       nav(rs.replyToThreadId ? `/thread/${rs.replyToThreadId}` : '/sent', { replace: true });
@@ -617,263 +473,329 @@ export default function Compose() {
     }
   };
 
+  const totalRecipients = to.length + cc.length + bcc.length;
+
   return (
-    <form onSubmit={send} className="flex h-full flex-col">
-      <Toolbar
-        right={
-          <>
-            <span className="text-mute label">
-              {savedAt ? 'draft saved' : ''}
-            </span>
-            <button type="button" className="btn label" onClick={() => nav(-1)}>
-              cancel
-            </button>
-            <button type="submit" className="btn btn-primary label" disabled={busy || !from || !to}>
-              {busy ? 'sending…' : 'send ▸'}
-            </button>
-          </>
-        }
+    /* Modal-pattern layout: centered card, slides up from 8px. No scrim since
+       this is a route, not a true overlay — but the visual reads as a modal. */
+    <div className="flex h-full items-start justify-center overflow-y-auto bg-bg px-4 py-8">
+      <form
+        onSubmit={send}
+        className="w-full max-w-[720px] rounded-lg border border-border bg-elev shadow-pop animate-slide-up"
       >
-        <span className="label">{rs.replyToMessageId ? 'reply' : 'new message'}</span>
-      </Toolbar>
-
-      <div className="hair-b">
-        <div className="field">
-          <div className="field-label">from</div>
-          <select
-            className="field-value w-full border-0"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
+        {/* Modal header */}
+        <div className="flex items-center gap-3 border-b border-border px-5 py-4">
+          <h1 className="flex-1 text-[15px] font-semibold text-ink">
+            {rs.replyToMessageId ? 'Reply' : 'New message'}
+          </h1>
+          <span className="pill">
+            <LockIcon size={11} />
+            End-to-end encrypted
+          </span>
+          <button
+            type="button"
+            className="btn-ghost btn btn-sm"
+            onClick={() => nav(-1)}
+            aria-label="Close compose"
           >
-            {myAddresses.map((a) => (
-              <option key={a} value={a}>{a}</option>
-            ))}
-          </select>
+            <XIcon />
+          </button>
         </div>
-        <RecipientField
-          label="to"
-          value={to}
-          onChange={setTo}
-          required
-          placeholder="someone@example.com"
-          myAddresses={myAddresses}
-        />
-        <RecipientField
-          label="cc"
-          value={cc}
-          onChange={setCc}
-          myAddresses={myAddresses}
-        />
-        <RecipientField
-          label="bcc"
-          value={bcc}
-          onChange={setBcc}
-          myAddresses={myAddresses}
-          autocomplete={false}
-        />
-        <div className="field">
-          <div className="field-label">subject</div>
-          <input
-            className="field-value w-full border-0"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
+
+        {/* Fields */}
+        <div className="border-b border-border">
+          {/* From */}
+          <div className="flex items-center gap-3 border-b border-border px-5 py-2.5">
+            <label className="w-10 shrink-0 text-[12px] text-ink-faint">From</label>
+            <select
+              className="flex-1 bg-transparent text-[13.5px] text-ink outline-none"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            >
+              {myAddresses.map((a) => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* To */}
+          <RecipientField
+            label="To"
+            value={to}
+            onChange={setTo}
+            required
+            placeholder="recipient@example.com"
+            myAddresses={myAddresses}
           />
-        </div>
-      </div>
 
-      {secretMode && (
-        <div className="hair-b bg-[var(--bg-mute,#f5f5f5)] px-3 py-2 text-xs">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="label">secret link — encrypted, password-gated</span>
-            <button
-              type="button"
-              className="btn label text-xs"
-              onClick={() => setSecretMode(false)}
-            >
-              cancel secret mode
-            </button>
+          {/* Cc */}
+          <RecipientField
+            label="Cc"
+            value={cc}
+            onChange={setCc}
+            myAddresses={myAddresses}
+          />
+
+          {/* Bcc */}
+          <RecipientField
+            label="Bcc"
+            value={bcc}
+            onChange={setBcc}
+            myAddresses={myAddresses}
+            autocomplete={false}
+          />
+
+          {/* Subject */}
+          <div className="flex items-center gap-3 border-b border-border px-5 py-2.5">
+            <label className="w-10 shrink-0 text-[12px] text-ink-faint">Subject</label>
+            <input
+              className="flex-1 bg-transparent text-[13.5px] text-ink outline-none placeholder:text-ink-faint"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="A clear subject"
+            />
           </div>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            <label className="flex flex-col gap-1">
-              <span className="text-mute">password</span>
-              <input
-                className="border px-2 py-1 font-mono"
-                type="password"
-                value={secretPassword}
-                onChange={(e) => setSecretPassword(e.target.value)}
-                autoComplete="new-password"
-                required={secretMode}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-mute">confirm password</span>
-              <input
-                className="border px-2 py-1 font-mono"
-                type="password"
-                value={secretPasswordConfirm}
-                onChange={(e) => setSecretPasswordConfirm(e.target.value)}
-                autoComplete="new-password"
-                required={secretMode}
-              />
-            </label>
-            <label className="flex flex-col gap-1 md:col-span-2">
-              <span className="text-mute">
-                hint <span className="text-[10px]">(shown in the email — no secrets)</span>
+        </div>
+
+        {/* Secret mode panel */}
+        {secretMode && (
+          <div className="border-b border-border bg-sunken px-5 py-3">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-[12.5px] font-medium text-ink">Secret link — password-gated</span>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => setSecretMode(false)}
+              >
+                Cancel secret mode
+              </button>
+            </div>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+              <label className="flex flex-col gap-1">
+                <span className="text-[11.5px] text-ink-muted">Password</span>
+                <input
+                  className="input font-mono"
+                  type="password"
+                  value={secretPassword}
+                  onChange={(e) => setSecretPassword(e.target.value)}
+                  autoComplete="new-password"
+                  required={secretMode}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11.5px] text-ink-muted">Confirm password</span>
+                <input
+                  className="input font-mono"
+                  type="password"
+                  value={secretPasswordConfirm}
+                  onChange={(e) => setSecretPasswordConfirm(e.target.value)}
+                  autoComplete="new-password"
+                  required={secretMode}
+                />
+              </label>
+              <label className="flex flex-col gap-1 md:col-span-2">
+                <span className="text-[11.5px] text-ink-muted">
+                  Hint <span className="text-ink-faint">(shown in the email — no secrets)</span>
+                </span>
+                <input
+                  className="input"
+                  value={secretHint}
+                  onChange={(e) => setSecretHint(e.target.value)}
+                  placeholder="e.g. the thing we talked about saturday"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11.5px] text-ink-muted">Expires</span>
+                <select
+                  className="input"
+                  value={secretPolicy}
+                  onChange={(e) => setSecretPolicy(e.target.value as SecretPolicy)}
+                >
+                  <option value="one_time">One-time view</option>
+                  <option value="1h">1 hour after open</option>
+                  <option value="24h">24 hours after open</option>
+                  <option value="14d">14 days after open</option>
+                  <option value="never">Never (1 year max)</option>
+                </select>
+              </label>
+            </div>
+            <p className="mt-2 text-[11px] text-ink-muted">
+              Share the password with the recipient out-of-band. It is never sent in the email.
+            </p>
+          </div>
+        )}
+
+        {/* Body editor */}
+        <div
+          ref={bodyRef}
+          className="min-h-[14rem] w-full overflow-y-auto border-b border-border px-5 py-4 text-[14px] leading-relaxed text-ink focus:outline-none"
+          contentEditable
+          suppressContentEditableWarning
+          onInput={(e) => setBody((e.currentTarget as HTMLDivElement).innerHTML)}
+          data-placeholder="Write your message…"
+        />
+
+        {/* Attachment chips */}
+        {(attachments.length > 0 || hostedAttachments.length > 0) && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
+            {attachments.map((a) => (
+              <span
+                key={a.id}
+                className="chip"
+                title={`${a.mime} · ${formatBytes(a.size_bytes)} · inline MIME`}
+              >
+                <PaperclipIcon />
+                <span className="max-w-[14rem] truncate">{a.filename}</span>
+                <span className="text-ink-faint">{formatBytes(a.size_bytes)}</span>
+                <button
+                  type="button"
+                  className="text-ink-faint transition-colors hover:text-ink"
+                  onClick={() => void removeAttachment(a)}
+                  aria-label={`remove ${a.filename}`}
+                >
+                  ×
+                </button>
               </span>
-              <input
-                className="border px-2 py-1"
-                value={secretHint}
-                onChange={(e) => setSecretHint(e.target.value)}
-                placeholder="e.g. the thing we talked about saturday"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-mute">expires</span>
-              <select
-                className="border px-2 py-1"
-                value={secretPolicy}
-                onChange={(e) => setSecretPolicy(e.target.value as SecretPolicy)}
+            ))}
+            {hostedAttachments.map((a) => (
+              <span
+                key={a.id}
+                className="chip"
+                title={`${a.mime} · ${formatBytes(a.plaintext_size)} · E2E-encrypted link in body`}
               >
-                <option value="one_time">one-time view</option>
-                <option value="1h">1 hour after open</option>
-                <option value="24h">24 hours after open</option>
-                <option value="14d">14 days after open</option>
-                <option value="never">never (1 year max)</option>
-              </select>
-            </label>
+                <LockIcon size={11} />
+                <span className="max-w-[14rem] truncate">{a.filename}</span>
+                <span className="text-ink-faint">{formatBytes(a.plaintext_size)} · link</span>
+                <button
+                  type="button"
+                  className="text-ink-faint transition-colors hover:text-ink"
+                  onClick={() => removeHostedAttachment(a.id)}
+                  aria-label={`remove ${a.filename}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
           </div>
-          <p className="text-mute mt-2 text-[11px]">
-            Share the password with the recipient out-of-band (Signal, SMS, in
-            person). It is never sent in the email.
-          </p>
+        )}
+
+        {/* Formatting toolbar */}
+        <div className="flex flex-wrap items-center gap-1 border-b border-border px-4 py-2">
+          <FmtBtn label="B" title="Bold" bold onClick={() => cmd('bold')} />
+          <FmtBtn label="I" title="Italic" italic onClick={() => cmd('italic')} />
+          <FmtBtn label="S" title="Strikethrough" strike onClick={() => cmd('strikeThrough')} />
+          <span className="mx-1 text-border-strong">|</span>
+          <FmtBtn
+            label={attachingFile ? 'Attaching…' : 'Attach'}
+            title="Attach a file"
+            onClick={() => fileInputRef.current?.click()}
+            icon={<PaperclipIcon />}
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => void uploadFiles(e.target.files)}
+          />
+          <span className="mx-1 text-border-strong">|</span>
+          <FmtBtn
+            label={secretMode ? 'Secret on' : 'Secret'}
+            title="Send as password-protected link"
+            onClick={() => setSecretMode((v) => !v)}
+            icon={<LockIcon size={12} />}
+          />
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost px-2 text-[11px] text-ink-faint"
+            title={
+              'Secret mode: we encrypt your subject, body, and attachments in your browser ' +
+              'with a key derived from a password you set. The recipient gets a link instead ' +
+              'of the message. When they open the link, they enter the password, the content ' +
+              'decrypts in their browser, and we never see the password or the plaintext. ' +
+              'Share the password out-of-band (Signal, SMS, in person).'
+            }
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setSecretMode(true)}
+          >
+            ?
+          </button>
         </div>
-      )}
 
-      {/*
-        The body composer. contentEditable means the user sees formatted
-        text live — typing into a bold range stays bold, list items get a
-        visible bullet, etc. We keep React's `body` state in sync via
-        onInput so autosave and send always see the latest innerHTML.
-        Initial content (e.g. quoted reply, restored draft) can be set
-        on mount via the ref; we leave it empty here for now.
-      */}
-      <div
-        ref={bodyRef}
-        className="prose-sm flex-1 w-full overflow-y-auto p-4 text-sm leading-relaxed focus:outline-none"
-        contentEditable
-        suppressContentEditableWarning
-        onInput={(e) => setBody((e.currentTarget as HTMLDivElement).innerHTML)}
-        data-placeholder="message…"
-        style={{ minHeight: '12rem' }}
-      />
+        {/* Error */}
+        {err && (
+          <div className="border-b border-danger/30 bg-danger-soft px-5 py-2.5 text-[13px] text-danger">
+            {err}
+          </div>
+        )}
 
-      {(attachments.length > 0 || hostedAttachments.length > 0) && (
-        <div className="hair-t flex flex-wrap items-center gap-2 px-3 py-2">
-          {attachments.map((a) => (
-            <span
-              key={a.id}
-              className="hair-all flex items-center gap-2 px-2 py-1 text-xs"
-              title={`${a.mime} · ${formatBytes(a.size_bytes)} · inline MIME`}
-            >
-              <span className="truncate max-w-[16rem]">{a.filename}</span>
-              <span className="text-mute">{formatBytes(a.size_bytes)}</span>
-              <button
-                type="button"
-                className="text-mute hover:text-black"
-                onClick={() => void removeAttachment(a)}
-                title="remove"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-          {hostedAttachments.map((a) => (
-            <span
-              key={a.id}
-              className="hair-all flex items-center gap-2 px-2 py-1 text-xs"
-              title={`${a.mime} · ${formatBytes(a.plaintext_size)} · E2E-encrypted link in body`}
-            >
-              <span aria-hidden>🔐</span>
-              <span className="truncate max-w-[16rem]">{a.filename}</span>
-              <span className="text-mute">{formatBytes(a.plaintext_size)} · link</span>
-              <button
-                type="button"
-                className="text-mute hover:text-black"
-                onClick={() => removeHostedAttachment(a.id)}
-                title="remove"
-              >
-                ×
-              </button>
-            </span>
-          ))}
+        {/* Footer */}
+        <div className="flex items-center gap-3 px-5 py-4">
+          {/* Microcopy */}
+          <div className="flex-1 text-[12px] text-ink-muted">
+            {savedAt && <span className="mr-3 text-ink-faint">Draft saved</span>}
+            {totalRecipients > 0 && (
+              <span>
+                <LockIcon size={11} />
+                {' '}Encrypted to {totalRecipients} recipient{totalRecipients === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
+          {/* Actions */}
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => nav(-1)}
+          >
+            Discard
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={async () => {
+              if (!myPub) return;
+              try {
+                const payload = {
+                  id: draftId,
+                  in_reply_to_message_id: rs.replyToMessageId ?? null,
+                  to_addrs: to.map((r) => r.addr),
+                  cc_addrs: cc.map((r) => r.addr),
+                  bcc_addrs: bcc.map((r) => r.addr),
+                  subject_ct_b64: subject ? b64uEncode(sealToSelf(utf8(subject), myPub)) : null,
+                  body_ct_b64: body ? b64uEncode(sealToSelf(utf8(body), myPub)) : null,
+                  attachments: [],
+                };
+                const r = await api.post<{ id: string; updated_at: number }>('/api/drafts', payload);
+                setDraftId(r.id);
+                setSavedAt(r.updated_at);
+                nav('/drafts');
+              } catch (e: any) {
+                setErr(e?.message || 'save failed');
+              }
+            }}
+          >
+            Save draft
+          </button>
+          <button
+            type="submit"
+            className="btn btn-accent"
+            disabled={busy || !from || to.length === 0}
+          >
+            {busy ? 'Sending…' : 'Send'}
+          </button>
         </div>
-      )}
-
-      {/* Formatting toolbar — at the bottom of the form so it stays
-          close to the keyboard on mobile and out of the way until the
-          user actually wants to format. */}
-      <div className="hair-t flex flex-wrap items-center gap-1 px-2 py-1">
-        {/* Inline styling stays — bold/italic/strike behave reliably
-            via execCommand. List / blockquote / code / code-block /
-            link were removed because contentEditable + execCommand
-            for block-level formatting is unreliable across browsers
-            (cursor escapes the block, ranges collapse, nesting
-            breaks) and the bugs outweighed the value. Plain text in
-            the message body is fine for now. */}
-        <FmtBtn label="B" title="bold" bold onClick={() => cmd('bold')} />
-        <FmtBtn label="I" title="italic" italic onClick={() => cmd('italic')} />
-        <FmtBtn label="S" title="strikethrough" strike
-          onClick={() => cmd('strikeThrough')} />
-        <span className="text-mute mx-1">|</span>
-        <FmtBtn label={attachingFile ? '⏳ attach' : '📎 attach'}
-          title="attach a file"
-          onClick={() => fileInputRef.current?.click()} />
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => void uploadFiles(e.target.files)}
-        />
-        <span className="text-mute mx-1">|</span>
-        <FmtBtn
-          label={secretMode ? '🔒 secret on' : '🔒 secret'}
-          title="send as password-protected link"
-          onClick={() => setSecretMode((v) => !v)}
-        />
-        {/* Lightweight explainer — a hover tooltip via title, plus a
-            persistent expandable on click for users who want to read
-            the model in detail. */}
-        <button
-          type="button"
-          className="btn label py-1 px-2 text-xs"
-          title={
-            'Secret mode: we encrypt your subject, body, and attachments in your browser ' +
-            'with a key derived from a password you set. The recipient gets a link instead ' +
-            'of the message. When they open the link, they enter the password, the content ' +
-            'decrypts in their browser, and we never see the password or the plaintext. ' +
-            'Share the password out-of-band (Signal, SMS, in person).'
-          }
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setSecretMode(true)}
-        >
-          ?
-        </button>
-      </div>
-
-      {err && <div className="hair-t inv px-3 py-2 text-sm">{err}</div>}
-    </form>
+      </form>
+    </div>
   );
 }
 
-/** execCommand names that operate on block ancestors (not inline ranges). */
 const BLOCK_COMMANDS = new Set([
   'insertUnorderedList',
   'insertOrderedList',
   'formatBlock',
 ]);
 
-/** CSS selector matching block-level tags execCommand recognizes as block ancestors. */
 const BLOCK_TAGS = 'p, div, blockquote, ul, ol, pre, h1, h2, h3, h4, h5, h6';
 
 function FmtBtn({
@@ -883,6 +805,7 @@ function FmtBtn({
   bold,
   italic,
   strike,
+  icon,
 }: {
   label: string;
   title: string;
@@ -890,21 +813,61 @@ function FmtBtn({
   bold?: boolean;
   italic?: boolean;
   strike?: boolean;
+  icon?: React.ReactNode;
 }) {
-  let cls = 'btn label py-1 px-2 text-xs';
-  if (bold) cls += ' font-bold';
-  if (italic) cls += ' italic';
-  if (strike) cls += ' line-through';
   return (
     <button
       type="button"
-      className={cls}
+      className={[
+        'btn btn-sm btn-ghost gap-1',
+        bold ? 'font-bold' : '',
+        italic ? 'italic' : '',
+        strike ? 'line-through' : '',
+      ].filter(Boolean).join(' ')}
       title={title}
-      onMouseDown={(e) => e.preventDefault() /* don't steal textarea focus */}
+      onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
     >
+      {icon}
       {label}
     </button>
+  );
+}
+
+function LockIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ display: 'inline', verticalAlign: 'middle', opacity: 0.6 }}
+      aria-hidden="true"
+    >
+      <rect x="3" y="7" width="10" height="7" rx="1.5" />
+      <path d="M5.5 7V5a2.5 2.5 0 1 1 5 0v2" />
+    </svg>
+  );
+}
+
+function XIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
   );
 }
 
@@ -917,24 +880,13 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/** Stricter escape for use inside HTML attributes — same shape but never
- *  emits unescaped quotes. The outbound link HTML uses href="..." so we
- *  must escape `"` (and amp + lt for good measure). */
 function escapeAttr(s: string): string {
   return escapeHtml(s);
 }
 
-/**
- * Best-effort HTML → plain text for the `text/plain` MIME alternative.
- * Browsers don't give us a parsed-document-to-text utility, so we
- * shovel through innerText on a hidden node: handles block breaks,
- * <br>s, and entity decoding correctly without pulling in a dep.
- */
 function htmlToPlainText(html: string): string {
   const div = document.createElement('div');
   div.innerHTML = html;
-  // innerText respects display/visibility so block elements get line
-  // breaks the way they would visually.
   return (div.innerText ?? div.textContent ?? '').trim();
 }
 
@@ -944,16 +896,11 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Slightly shorter form used inside the outbound-email blurb that
- *  introduces hosted-link attachments. Keeps the email body terse. */
 function formatBytesShort(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
-
-// `splitAddrs` retired — the to/cc/bcc inputs are now tag-based via
-// RecipientField, which manages parsing + dedup internally.
 
 function formatMiB(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`;

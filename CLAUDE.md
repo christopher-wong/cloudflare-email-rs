@@ -76,6 +76,7 @@ The repository now ships living technical documentation under `docs/` that is wr
 - [docs/worker.md](docs/worker.md) — full Rust worker design (three event handlers, RegistryDO vs MailboxDO, inbound email sequence, build pinning, invariants)
 - [docs/web.md](docs/web.md) — frontend (client crypto, WebAuthn enrollment/login sequences, state model, realtime, page responsibilities)
 - [docs/cloudflare-setup.md](docs/cloudflare-setup.md) — the complete Cloudflare configuration guide (Email Sending enable, Email Routing catch-all → Worker, R2, custom domains, the dashboard-only catch-all rule, local dev overrides, verification, and all the historical gotchas)
+- [design.md](design.md) — frontend design system & style guide: tokens, components, patterns, voice, anti-patterns. **Read before any UI work.** The implementation lives in `web/src/styles.css` (utility classes), `web/tailwind.config.js` (tokens), and `web/src/components/*` (primitives — Avatar, EmptyState, Loader, Toolbar). The marketing landing (`web/src/pages/Landing.tsx`) is intentionally self-contained in the original brutalist look and does **not** follow design.md — leave its scoped styles alone.
 
 **When you are about to edit code**, read the relevant diagram in `docs/architecture.md` first, then the line-number pointers in `worker.md` or `web.md`. For anything involving production deployment, Email Routing, or Email Sending, also read `docs/cloudflare-setup.md`. These docs are the single source of truth for call order, authorization boundaries, and Cloudflare resource configuration.
 

@@ -1,12 +1,13 @@
 /**
- * Cmd/Ctrl-K command palette: a centered modal listing app-wide actions
- * (compose, navigate, toggle sidebar, log out, etc.) filtered by a single
- * substring match against label + keywords.
+ * Cmd/Ctrl-K command palette: a scrim-backed modal pinned at 12vh from the
+ * top. Actions are passed in as props rather than imported globally because
+ * some of them (toggle sidebar, log out, show shortcuts) are bound to
+ * Chrome-local state.
  *
- * Open/close is owned by the parent (Chrome) so the same hotkey that opens
- * it from anywhere can also be re-pressed to close. Actions are passed in
- * as props rather than imported globally because some of them (toggle
- * sidebar, log out, show shortcuts) are bound to Chrome-local state.
+ * Behavior:
+ *   - Fuzzy substring match against label + keywords.
+ *   - Arrow-key + Enter navigation; Escape / scrim-click closes.
+ *   - Selection resets on open; clamps when the filtered list shrinks.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -39,7 +40,6 @@ export default function CommandPalette({
     if (!open) return;
     setQ('');
     setIdx(0);
-    // Microtask to ensure the modal is mounted before we focus.
     queueMicrotask(() => inputRef.current?.focus());
   }, [open]);
 
@@ -52,7 +52,7 @@ export default function CommandPalette({
     });
   }, [q, actions]);
 
-  // Clamp the selection any time the filtered list changes length.
+  // Clamp the selection when the filtered list changes length.
   useEffect(() => {
     if (idx >= filtered.length) setIdx(Math.max(0, filtered.length - 1));
   }, [filtered.length, idx]);
@@ -81,55 +81,88 @@ export default function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center"
-      style={{ paddingTop: 'max(10vh, env(safe-area-inset-top))' }}
+      className="fixed inset-0 z-50"
       role="dialog"
       aria-modal="true"
       aria-label="command palette"
     >
+      {/* Scrim */}
       <div
-        className="absolute inset-0"
-        style={{ background: 'rgba(0,0,0,0.4)' }}
+        className="scrim"
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative z-10 mx-3 w-full max-w-xl bg-paper hair-all">
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="type a command…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={onKey}
-          className="w-full"
-          style={{ border: 'none', borderBottom: '1px solid #000', padding: '0.625rem 0.75rem' }}
-        />
-        <ul className="max-h-[60vh] overflow-y-auto">
-          {filtered.length === 0 && (
-            <li className="text-mute px-3 py-3 text-sm">no matches</li>
-          )}
-          {filtered.map((a, i) => {
-            const selected = i === idx;
-            return (
-              <li
-                key={a.id}
-                className={
-                  'flex cursor-pointer items-center justify-between gap-3 px-3 py-2 ' +
-                  (selected ? 'inv' : 'hover:bg-ink hover:text-paper')
-                }
-                onMouseMove={() => setIdx(i)}
-                onClick={() => {
-                  onClose();
-                  a.run();
-                }}
-              >
-                <span className="truncate label">{a.label}</span>
-                {a.hint && <span className="kbd whitespace-nowrap">{a.hint}</span>}
-              </li>
-            );
-          })}
-        </ul>
+
+      {/* Panel — pinned at 12vh from the top, centered horizontally */}
+      <div
+        className="relative z-50 mx-auto mt-[12vh] w-full max-w-[560px] px-4"
+        style={{ maxHeight: 'calc(100vh - 14vh)' }}
+      >
+        <div className="rounded-lg bg-elev shadow-pop overflow-hidden animate-zoom-in">
+          {/* Search input */}
+          <div className="flex items-center gap-2.5 px-3.5 border-b border-border h-11">
+            <SearchIcon />
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder="Search commands…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={onKey}
+              className="flex-1 bg-transparent outline-none text-[13.5px] text-ink placeholder:text-ink-faint"
+            />
+          </div>
+
+          {/* Results */}
+          <ul className="max-h-[min(60vh,380px)] overflow-y-auto py-1.5">
+            {filtered.length === 0 && (
+              <li className="px-3.5 py-3 text-[13px] text-ink-faint">No results</li>
+            )}
+            {filtered.map((a, i) => {
+              const selected = i === idx;
+              return (
+                <li
+                  key={a.id}
+                  className={[
+                    'flex cursor-pointer items-center justify-between gap-3 px-3.5 py-2 mx-1.5 rounded-sm',
+                    selected
+                      ? 'bg-accent-soft text-accent-ink'
+                      : 'text-ink-muted hover:bg-hover hover:text-ink',
+                  ].join(' ')}
+                  onMouseMove={() => setIdx(i)}
+                  onClick={() => {
+                    onClose();
+                    a.run();
+                  }}
+                >
+                  <span className="truncate text-[13.5px] font-medium">{a.label}</span>
+                  {a.hint && <span className="kbd shrink-0">{a.hint}</span>}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       </div>
     </div>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="shrink-0 text-ink-faint"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
   );
 }

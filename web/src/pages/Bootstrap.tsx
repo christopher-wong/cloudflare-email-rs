@@ -38,53 +38,68 @@ export default function Bootstrap() {
   };
 
   return (
-    <div className="mx-auto flex h-full max-w-xl flex-col gap-6 p-8">
-      <header>
-        <div className="label">BMAIL · bootstrap</div>
-        <h1 className="mt-1 text-2xl font-bold">First user</h1>
-        <p className="text-mute mt-2 text-sm">
-          No users exist yet on this instance. Create the first one — they will
-          be an admin and can invite others. Make sure your passkey-capable
-          device is ready.
-        </p>
-      </header>
-
-      <form onSubmit={submit} className="hair-all">
-        <div className="field">
-          <div className="field-label">handle</div>
-          <input
-            className="field-value w-full border-0"
-            value={handle}
-            onChange={(e) => setHandle(e.target.value)}
-            required
-          />
-        </div>
-        <div className="field">
-          <div className="field-label">address</div>
-          <div className="field-value flex w-full items-stretch">
-            <input
-              className="w-full border-0"
-              placeholder="christopher"
-              value={localPart}
-              onChange={(e) => setLocalPart(e.target.value.toLowerCase().replace(/[^a-z0-9._+-]/g, ''))}
-              required
-              autoFocus
-            />
-            <span className="text-mute self-center pl-2">@{domain}</span>
+    <div className="min-h-screen bg-bg flex items-center justify-center px-4 py-12">
+      <div className="card w-full max-w-[480px]">
+        <div className="card-head">
+          <div>
+            <div className="eyebrow mb-1">welcome</div>
+            <h1 className="text-[26px] font-semibold tracking-tight text-ink leading-tight">
+              Set up bmail
+            </h1>
           </div>
         </div>
 
-        {err && <div className="hair-t inv px-3 py-2 text-sm">{err}</div>}
-
-        <div className="hair-t flex items-center justify-between p-3">
-          <span className="text-mute text-xs">
-            you'll register a passkey on the next screen
-          </span>
-          <button type="submit" className="btn btn-primary label" disabled={busy}>
-            {busy ? 'creating…' : 'continue ▸'}
-          </button>
+        <div className="card-body border-b border-border">
+          <p className="text-[13.5px] text-ink-muted leading-relaxed">
+            No users exist yet on this instance. Create the first account — it
+            will be an admin and can invite others. Make sure your
+            passkey-capable device is ready.
+          </p>
         </div>
-      </form>
+
+        <form onSubmit={submit}>
+          <div>
+            <div className="field-row">
+              <label className="field-label" htmlFor="bs-handle">Handle</label>
+              <input
+                id="bs-handle"
+                className="input"
+                value={handle}
+                onChange={(e) => setHandle(e.target.value)}
+                required
+              />
+            </div>
+            <div className="field-row" style={{ borderBottom: 0 }}>
+              <label className="field-label" htmlFor="bs-local">Address</label>
+              <div className="flex items-center gap-1">
+                <input
+                  id="bs-local"
+                  className="input"
+                  placeholder="christopher"
+                  value={localPart}
+                  onChange={(e) => setLocalPart(e.target.value.toLowerCase().replace(/[^a-z0-9._+-]/g, ''))}
+                  required
+                  autoFocus
+                />
+                <span className="text-[13.5px] text-ink-muted ml-1">@{domain}</span>
+              </div>
+            </div>
+          </div>
+
+          {err && (
+            <div className="px-[18px] py-3 text-[13px] text-danger border-t border-border">{err}</div>
+          )}
+
+          <div className="flex items-center justify-between px-[18px] py-4 border-t border-border">
+            <span className="text-[12px] text-ink-faint">
+              You'll register a passkey on the next screen.
+            </span>
+            <button type="submit" className="btn btn-primary" disabled={busy || !localPart}>
+              {busy ? 'Creating…' : 'Get started'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

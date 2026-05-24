@@ -1,24 +1,20 @@
 /**
- * Initial-letter avatar. Deterministic: same input → same color so a
- * sender's row always looks the same across reloads and tabs. We hash
- * the address to one of 12 hand-picked black/white-compatible accent
- * tones so we don't undercut the rest of the chrome's brutalist B&W
- * palette.
+ * Initials-on-a-disc avatar. Deterministic palette: same input → same color
+ * across reloads and tabs. The palette is the desaturated jewel-tone set
+ * specified by the design system — never the accent (would steal the
+ * encryption signal). For interactive variants (`onToggle`), the avatar
+ * doubles as the row's checkbox: hovered shows an ink check overlay; when
+ * selected, an accent-colored check replaces the avatar entirely.
  */
 
 const PALETTE = [
-  '#000000', // pure black — for cases like our own outbound
-  '#222',
-  '#444',
-  '#1f3a8a', // muted navy
-  '#3b2e5f', // muted plum
-  '#5b3a29', // burnt sienna
-  '#5e4d1e', // amber-brown
-  '#1f4d36', // pine
-  '#3a4d52',
-  '#4d2a3a',
-  '#6b3b1f',
-  '#2d3a52',
+  '#5C7A6B', // sage
+  '#7E6B5A', // walnut
+  '#6B6A8C', // muted indigo
+  '#8A6B7A', // dusty plum
+  '#555558', // graphite
+  '#6B7E8C', // slate blue
+  '#8C7E5A', // ochre
 ] as const;
 
 function hash(s: string): number {
@@ -27,28 +23,21 @@ function hash(s: string): number {
   return Math.abs(h);
 }
 
-function initial(s: string): string {
+function initials(s: string): string {
   const trimmed = s.trim();
   if (!trimmed) return '·';
-  // For an email address we want the first character of the local part,
-  // not the @. Same logic falls through for plain names.
-  const first = trimmed[0];
-  return first.toUpperCase();
+  // Strip the domain so the disc shows the local-part initial. For multi-word
+  // human names (no @), take the first letter of the first two words.
+  const local = trimmed.split('@')[0];
+  const words = local.replace(/[._\-+]/g, ' ').split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '·';
+  if (words.length === 1) return words[0][0]!.toUpperCase();
+  return (words[0][0]! + words[1][0]!).toUpperCase();
 }
 
-/**
- * Initial-letter avatar with an optional "tap to select" affordance.
- *
- * When `onToggle` is provided, the avatar renders as a button: on hover
- * it shows a checkbox-style outline overlay, and when `selected` is true
- * the letter is swapped for a check on an inverted background. This
- * collapses the per-row checkbox column into the avatar slot — same
- * pixel, two meanings, depending on whether the user is in a multi-select
- * mood.
- */
 export default function Avatar({
   seed,
-  size = 36,
+  size = 32,
   selected = false,
   onToggle,
 }: {
@@ -58,33 +47,29 @@ export default function Avatar({
   onToggle?: () => void;
 }) {
   const bg = PALETTE[hash(seed) % PALETTE.length];
-  const fontSize = Math.round(size * 0.45);
+  const fontSize = Math.max(10, Math.round(size * 0.36));
 
-  const baseStyle: React.CSSProperties = {
+  const discStyle: React.CSSProperties = {
     width: size,
     height: size,
-    background: selected ? '#000' : bg,
-    color: '#fff',
+    background: bg,
     fontSize,
-    lineHeight: 1,
-    border: '1px solid #000',
   };
 
   if (!onToggle) {
     return (
-      <div
+      <span
         aria-hidden
-        className="flex shrink-0 items-center justify-center font-bold"
-        style={baseStyle}
+        className="avatar"
+        style={discStyle}
       >
-        {initial(seed)}
-      </div>
+        {initials(seed)}
+      </span>
     );
   }
 
-  // Interactive mode: button with a hover hint and a selected state. We
-  // stop event propagation so the surrounding row's onClick (navigate to
-  // thread) doesn't fire when toggling selection.
+  // Interactive: avatar doubles as the row's checkbox. Stop propagation so
+  // the surrounding row's onClick (navigate to thread) doesn't fire.
   return (
     <button
       type="button"
@@ -94,20 +79,29 @@ export default function Avatar({
       }}
       aria-pressed={selected}
       aria-label={selected ? 'deselect thread' : 'select thread'}
-      title={selected ? 'deselect' : 'select'}
-      className="group relative flex shrink-0 items-center justify-center font-bold"
-      style={baseStyle}
+      className="group relative inline-block shrink-0"
+      style={{ width: size, height: size }}
     >
-      {selected ? (
-        <CheckIcon size={Math.round(size * 0.55)} />
-      ) : (
-        <>
-          <span className="transition-opacity group-hover:opacity-0">{initial(seed)}</span>
-          <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
-            <CheckIcon size={Math.round(size * 0.55)} />
-          </span>
-        </>
-      )}
+      <span
+        className={
+          'absolute inset-0 grid place-items-center rounded-full text-white font-semibold transition-opacity ' +
+          (selected ? 'opacity-0' : 'group-hover:opacity-30')
+        }
+        style={discStyle}
+      >
+        {initials(seed)}
+      </span>
+      <span
+        className={
+          'absolute inset-0 grid place-items-center rounded-full text-white transition-[opacity,transform,background] duration-150 ' +
+          (selected
+            ? 'opacity-100 scale-100 bg-accent'
+            : 'opacity-0 scale-90 bg-ink group-hover:opacity-100 group-hover:scale-100')
+        }
+        style={{ width: size, height: size }}
+      >
+        <CheckIcon size={Math.round(size * 0.5)} />
+      </span>
     </button>
   );
 }
@@ -117,18 +111,16 @@ function CheckIcon({ size }: { size: number }) {
     <svg
       width={size}
       height={size}
-      viewBox="0 0 16 16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
       aria-hidden="true"
       style={{ display: 'block' }}
     >
-      <polyline
-        points="3,8 7,12 13,4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="square"
-        strokeLinejoin="miter"
-      />
+      <polyline points="5 13 9 17 19 7" />
     </svg>
   );
 }

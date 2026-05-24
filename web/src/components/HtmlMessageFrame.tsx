@@ -55,6 +55,7 @@ export default function HtmlMessageFrame({
 }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState(initialHeight);
+  const [loaded, setLoaded] = useState(false);
 
   // Build the doc string once per (html, loadImages) pair. We:
   //   1. Sanitize the raw email HTML.
@@ -63,17 +64,12 @@ export default function HtmlMessageFrame({
   //      loadImages prop.
   //   3. Inject <base target="_blank"> + an empty <head> wrapper if
   //      the email didn't supply one.
+  //   4. Inject a bmail-themed stylesheet for clean reading layout.
   //
   // Re-running the rewriter when `loadImages` flips is the whole
   // "show images" UX — the iframe re-renders from a new srcDoc.
   const decorated = useMemo(() => {
     const sanitized = DOMPurify.sanitize(html, {
-      // Strip the noisy / dangerous tags by default. DOMPurify's
-      // default config already removes <script>, event handlers,
-      // and javascript: URLs; the FORBID_TAGS list below adds
-      // belt-and-braces coverage for things that aren't scripts
-      // but still let an attacker do something nasty (form posts,
-      // remote stylesheets, meta refresh).
       FORBID_TAGS: [
         'script',
         'iframe',
@@ -96,13 +92,9 @@ export default function HtmlMessageFrame({
       ALLOW_DATA_ATTR: false,
     });
 
-    // Use a detached document to walk and rewrite img/src. We can't
-    // do this on the live document (we're not yet mounted) and we
-    // don't want to use innerHTML round-trips (slow + lossy).
     const parser = new DOMParser();
     const doc = parser.parseFromString(sanitized, 'text/html');
 
-    // Ensure <head> exists with a <base target="_blank">.
     if (!doc.head) {
       const head = doc.createElement('head');
       doc.documentElement.insertBefore(head, doc.body);
@@ -115,15 +107,11 @@ export default function HtmlMessageFrame({
     // Apply image policy.
     for (const img of Array.from(doc.querySelectorAll('img'))) {
       const src = img.getAttribute('src');
-      img.removeAttribute('srcset'); // belt-and-braces; DOMPurify already FORBID_ATTR
+      img.removeAttribute('srcset');
       if (!src) continue;
-      // Skip already-data-url images (inline base64 — usually
-      // sender's own logo, no tracking concern).
       if (src.startsWith('data:image/')) continue;
       if (!loadImages) {
         img.setAttribute('src', BLANK_IMG);
-        // Stash original so a future "show images" toggle could
-        // restore. (Re-rendered from raw on toggle anyway.)
         img.setAttribute('data-original-src', src);
       } else if (/^https?:/i.test(src)) {
         img.setAttribute(
@@ -133,30 +121,82 @@ export default function HtmlMessageFrame({
       }
     }
 
-    // Add a tiny stylesheet so wide email tables don't blow out our
-    // column width — long tables get a horizontal scrollbar inside
-    // the iframe instead of pushing the page.
+    // Inject a bmail-aligned reading stylesheet.
+    // Uses Geist for body, soft border tokens passed as static values
+    // (the iframe doc doesn't inherit CSS vars from the parent).
     const style = doc.createElement('style');
     style.textContent = `
-      html, body { margin: 0; padding: 0; }
-      body { font-family: -apple-system, system-ui, sans-serif; word-wrap: break-word; }
-      img { max-width: 100%; height: auto; }
-      table { max-width: 100%; }
+      html, body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: 'Geist', -apple-system, ui-sans-serif, system-ui, sans-serif;
+        font-size: 14px;
+        line-height: 1.65;
+        color: #181816;
+        background: #ffffff;
+        word-wrap: break-word;
+        -webkit-font-smoothing: antialiased;
+      }
+      img {
+        max-width: 100%;
+        height: auto;
+      }
+      table {
+        max-width: 100%;
+        border-collapse: collapse;
+      }
+      a {
+        color: oklch(0.35 0.05 155);
+        text-underline-offset: 3px;
+        text-decoration-thickness: 1px;
+      }
+      a:hover {
+        text-decoration-thickness: 2px;
+      }
+      hr {
+        border: 0;
+        border-top: 1px solid #EBE9E2;
+        margin: 20px 0;
+      }
+      blockquote {
+        margin: 12px 0;
+        padding: 0 0 0 16px;
+        border-left: 2px solid #EBE9E2;
+        color: #6B6B66;
+      }
+      pre, code {
+        font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.88em;
+        background: #F4F2EC;
+        border-radius: 4px;
+      }
+      code {
+        padding: 1px 5px;
+      }
+      pre {
+        padding: 12px 14px;
+        overflow-x: auto;
+      }
+      pre code {
+        background: none;
+        padding: 0;
+        border-radius: 0;
+      }
     `;
     doc.head.appendChild(style);
 
     return '<!doctype html>' + doc.documentElement.outerHTML;
   }, [html, loadImages]);
 
-  // Parent-side height measurement. `allow-same-origin` (without
-  // `allow-scripts`) means we can read iframe.contentDocument from
-  // here. ResizeObserver fires whenever the body box changes (images
-  // finishing load, fonts swapping in, etc.).
+  // Parent-side height measurement.
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
     let cleanup: (() => void) | null = null;
     const onLoad = () => {
+      setLoaded(true);
       const doc = iframe.contentDocument;
       if (!doc) return;
       const measure = () => {
@@ -167,13 +207,8 @@ export default function HtmlMessageFrame({
         if (h > 0) setHeight(Math.min(h + 4, 100_000));
       };
       measure();
-      // ResizeObserver on the body catches image loads + dynamic
-      // layout. Constructor is in the iframe's window, since the
-      // ResizeObserver from the parent window can observe nodes
-      // from a same-origin iframe.
       const ro = new ResizeObserver(measure);
       if (doc.body) ro.observe(doc.body);
-      // Images load async — re-measure as each finishes.
       const imgs = doc.images;
       const onImg = () => measure();
       for (let i = 0; i < imgs.length; i++) {
@@ -196,22 +231,30 @@ export default function HtmlMessageFrame({
   }, [decorated]);
 
   return (
-    <iframe
-      ref={iframeRef}
-      title="email"
-      // allow-same-origin WITHOUT allow-scripts: parent can read
-      // the iframe DOM (for sizing), but no JS runs inside.
-      // allow-popups lets <base target=_blank> work.
-      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      referrerPolicy="no-referrer"
-      srcDoc={decorated}
-      style={{
-        display: 'block',
-        width: '100%',
-        height: `${height}px`,
-        border: 0,
-        background: 'white',
-      }}
-    />
+    <div className="card overflow-hidden">
+      {/* Loading shimmer — shown until the iframe reports loaded */}
+      {!loaded && (
+        <div className="space-y-2 p-4">
+          <div className="h-3 w-3/4 animate-pulse-soft rounded bg-sunken" />
+          <div className="h-3 w-full animate-pulse-soft rounded bg-sunken" />
+          <div className="h-3 w-5/6 animate-pulse-soft rounded bg-sunken" />
+          <div className="h-3 w-2/3 animate-pulse-soft rounded bg-sunken" />
+        </div>
+      )}
+      <iframe
+        ref={iframeRef}
+        title="email"
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer"
+        srcDoc={decorated}
+        style={{
+          display: loaded ? 'block' : 'none',
+          width: '100%',
+          height: `${height}px`,
+          border: 0,
+          background: 'white',
+        }}
+      />
+    </div>
   );
 }

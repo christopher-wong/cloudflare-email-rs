@@ -57,65 +57,87 @@ export default function Enroll() {
     nav('/', { replace: true });
   };
 
-  return (
-    <div className="mx-auto flex h-full max-w-xl flex-col gap-6 p-8">
-      {!phrase && (
-        <>
-          <header>
-            <div className="label">BMAIL · enroll</div>
-            <h1 className="mt-1 text-2xl font-bold">Register your passkey</h1>
-            <p className="text-mute mt-2 text-sm">
-              Your passkey unlocks your mailbox. We use its PRF extension to
-              derive an encryption key locally — Cloudflare never sees it.
-            </p>
-            <p className="text-mute mt-1 text-sm">
-              After registration you'll get a one-time 12-word recovery
-              phrase. Save it. If you lose your passkey, it's your only way
-              back in.
-            </p>
-          </header>
+  // Step 2: recovery phrase reveal
+  if (phrase) {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center px-4 py-12">
+        <div className="w-full max-w-[480px]">
+          <div className="mb-5">
+            <div className="eyebrow mb-1">invite · step 2 of 2</div>
+            <h1 className="text-[26px] font-semibold tracking-tight text-ink">Save your recovery phrase</h1>
+          </div>
+          <RecoveryReveal phrase={phrase} onContinue={finish} />
+        </div>
+      </div>
+    );
+  }
 
-          <form onSubmit={submit} className="hair-all">
-            <div className="field">
-              <div className="field-label">display name</div>
+  // Step 1: enrollment form
+  return (
+    <div className="min-h-screen bg-bg flex items-center justify-center px-4 py-12">
+      <div className="card w-full max-w-[480px]">
+        <div className="card-head">
+          <div>
+            <div className="eyebrow mb-1">invite</div>
+            <h1 className="text-[26px] font-semibold tracking-tight text-ink leading-tight">
+              Claim your address
+            </h1>
+          </div>
+        </div>
+
+        <div className="card-body border-b border-border">
+          <p className="text-[13.5px] text-ink-muted leading-relaxed">
+            Your passkey unlocks your mailbox. We use its PRF extension to
+            derive an encryption key locally — Cloudflare never sees it.
+          </p>
+          <p className="text-[13.5px] text-ink-muted leading-relaxed mt-2">
+            After registration you'll get a one-time 12-word recovery phrase.
+            Save it. If you lose your passkey, it's your only way back in.
+          </p>
+        </div>
+
+        <form onSubmit={submit}>
+          <div>
+            <div className="field-row">
+              <label className="field-label" htmlFor="enroll-name">Display name</label>
               <input
-                className="field-value w-full border-0"
+                id="enroll-name"
+                className="input"
                 placeholder="optional — shown on outgoing mail"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
               />
             </div>
-            <div className="field">
-              <div className="field-label">device</div>
+            <div className="field-row" style={{ borderBottom: 0 }}>
+              <label className="field-label" htmlFor="enroll-device">Device</label>
               <input
-                className="field-value w-full border-0"
+                id="enroll-device"
+                className="input"
                 value={credLabel}
                 onChange={(e) => setCredLabel(e.target.value)}
                 placeholder="e.g. macbook touch id"
               />
             </div>
+          </div>
 
-            {err && <div className="hair-t inv px-3 py-2 text-sm">{err}</div>}
+          {err && (
+            <div className="px-[18px] py-3 text-[13px] text-danger border-t border-border">{err}</div>
+          )}
 
-            <div className="hair-t flex items-center justify-between p-3">
-              <span className="text-mute text-xs">requires PRF: Chrome 116+, Safari 17.4+, FF 122+</span>
-              <button type="submit" className="btn btn-primary label" disabled={busy || !token}>
-                {busy ? 'registering…' : 'create passkey ▸'}
-              </button>
-            </div>
-          </form>
-        </>
-      )}
-
-      {phrase && (
-        <>
-          <header>
-            <div className="label">BMAIL · enroll · step 2 of 2</div>
-            <h1 className="mt-1 text-2xl font-bold">Save your recovery phrase</h1>
-          </header>
-          <RecoveryReveal phrase={phrase} onContinue={finish} />
-        </>
-      )}
+          <div className="flex items-center justify-between px-[18px] py-4 border-t border-border">
+            <span className="text-[12px] text-ink-faint">
+              Requires PRF: Chrome 116+, Safari 17.4+, FF 122+
+            </span>
+            <button
+              type="submit"
+              className="btn btn-accent"
+              disabled={busy || !token}
+            >
+              {busy ? 'Registering…' : 'Create my inbox →'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

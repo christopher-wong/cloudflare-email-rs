@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 import Toolbar from '@/components/Toolbar';
 import EmptyState from '@/components/EmptyState';
@@ -20,9 +20,7 @@ export default function Inbox() {
   const [selectedIdx, setSelectedIdx] = useState<number>(-1);
   const [query, setQuery] = useState('');
   const [labels, setLabels] = useState<api.Label[]>([]);
-  /** label_id to filter by, or '' for all. */
   const [labelFilter, setLabelFilter] = useState<string>('');
-  /** thread ids that are checked for bulk actions. */
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const searchRef = useRef<HTMLInputElement | null>(null);
   const rowRefs = useRef<Array<HTMLLIElement | null>>([]);
@@ -44,22 +42,16 @@ export default function Inbox() {
       if (labelFilter) qs.set('label', labelFilter);
       const t = await api.get<api.ThreadRow[]>(`/api/threads?${qs.toString()}`);
       setThreads(t);
-      setSelected(new Set()); // clear selection on every fresh load
+      setSelected(new Set());
     } catch (e: any) {
       setErr(e?.message || 'load failed');
     }
   };
 
-  useEffect(() => {
-    void load();
-  }, [labelFilter]);
+  useEffect(() => { void load(); }, [labelFilter]);
 
   useEffect(() => {
     return realtime.subscribe((ev) => {
-      // Re-fetch on anything that could change what the inbox shows:
-      // a new inbound message, a thread or message getting deleted from
-      // another tab, or read/star state flipping (which changes the
-      // unread badge and the star chip on the row).
       switch (ev.type) {
         case 'message.new':
           if (ev.direction === 'in') void load();
@@ -92,14 +84,12 @@ export default function Inbox() {
     await Promise.allSettled(
       ids.map((id) => api.del(`/api/threads/${encodeURIComponent(id)}`)),
     );
-    // Reload to reconcile if any of the deletes failed.
     void load();
   };
 
   const deleteThread = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (!confirm('delete this thread? messages and attachments will be removed.')) return;
-    // Optimistic update — drop the row immediately so the click feels fast.
     setThreads((cur) => (cur ? cur.filter((t) => t.id !== id) : cur));
     try {
       await api.del(`/api/threads/${encodeURIComponent(id)}`);
@@ -109,8 +99,6 @@ export default function Inbox() {
     }
   };
 
-  // Decrypt the first-message subject and snippet for each row. Cheap
-  // (one HKDF + AEAD per ciphertext) and the priv key stays in memory.
   const decrypted = useMemo(() => {
     const map = new Map<string, { subject?: string; snippet?: string }>();
     if (!threads) return map;
@@ -136,27 +124,11 @@ export default function Inbox() {
     [state.me?.addresses],
   );
 
-  // j/k row navigation. The selected row scrolls into view, and Enter opens
-  // the thread. The handler bails out when focus is in an editable element
-  // so it doesn't fight with the global Chrome shortcuts.
-  // The j/k handler is wired after `filteredThreads` is declared so it can
-  // navigate the currently-visible (filtered) set, not the unfiltered list.
-  // See below.
-
-  // Keep the selected row visible. `nearest` avoids jumpy autoscroll while
-  // the user is moving slowly through a small list.
   useEffect(() => {
     if (selectedIdx < 0) return;
     rowRefs.current[selectedIdx]?.scrollIntoView({ block: 'nearest' });
   }, [selectedIdx]);
 
-  /**
-   * Filter the already-loaded threads against the search query. We search
-   * over the row label, sender, subject hint, and decrypted (in-memory)
-   * subject + snippet. Server-side search isn't possible because subject
-   * and body are sealed — this is the only path that doesn't require
-   * leaking plaintext upstream.
-   */
   const filteredThreads = useMemo(() => {
     if (!threads) return null;
     const q = query.trim().toLowerCase();
@@ -169,16 +141,11 @@ export default function Inbox() {
         t.subject_hint ?? '',
         dec.subject ?? '',
         dec.snippet ?? '',
-      ]
-        .join(' ')
-        .toLowerCase();
+      ].join(' ').toLowerCase();
       return haystack.includes(q);
     });
   }, [threads, query, decrypted]);
 
-  // j/k navigates the currently-visible (filtered) list, not the unfiltered
-  // one. Enter opens the selected thread. Bails on editable targets so it
-  // doesn't fight with the search input.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
@@ -202,8 +169,6 @@ export default function Inbox() {
     return () => document.removeEventListener('keydown', onKey);
   }, [filteredThreads, selectedIdx, nav]);
 
-  // Global "/" focus shortcut — same idiom as Gmail / Vim. Don't fire when
-  // typing into an input/textarea/contenteditable.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== '/') return;
@@ -217,11 +182,6 @@ export default function Inbox() {
   }, []);
 
   const labelFor = (t: api.ThreadRow): string => {
-    // For an inbound-first thread, prefer the parsed display name from the
-    // sender's From header — most senders set one, and "Christopher Wong"
-    // is friendlier than "christopherwong@hey.com" in an inbox row.
-    // Fall back to the address when there's no name, and finally to the
-    // participants list for outbound-first threads.
     if (t.first_direction === 'in') {
       if (t.first_from_name) return t.first_from_name;
       if (t.first_from_addr) return t.first_from_addr;
@@ -232,144 +192,195 @@ export default function Inbox() {
     return list.slice(0, 3).join(', ') + (list.length > 3 ? ` +${list.length - 3}` : '');
   };
 
+  const threadCount = filteredThreads?.length ?? threads?.length ?? 0;
+
   return (
     <div className="flex h-full flex-col">
       <Toolbar
         right={
           selected.size > 0 ? (
             <>
-              <span className="text-mute label">{selected.size} selected</span>
+              <span className="text-[12.5px] text-ink-muted">{selected.size} selected</span>
               <button
                 type="button"
-                className="btn label"
+                className="btn btn-sm btn-danger"
                 onClick={() => void bulkDelete()}
               >
-                delete
+                Delete
               </button>
               <button
                 type="button"
-                className="btn label"
+                className="btn btn-sm btn-ghost"
                 onClick={() => setSelected(new Set())}
               >
-                clear
+                Clear
               </button>
             </>
           ) : (
-            <Link
-              to="/compose"
-              className="btn btn-primary label inline-flex items-center gap-1.5 whitespace-nowrap"
-            >
-              <span>compose</span>
-              <span aria-hidden="true">▸</span>
-            </Link>
+            <div className="flex items-center gap-2">
+              {/* Filter chips */}
+              <button
+                type="button"
+                className={`chip ${labelFilter === '' && !query ? 'chip-active' : ''}`}
+                onClick={() => { setLabelFilter(''); setQuery(''); }}
+              >
+                All
+              </button>
+              {labels.map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  className={`chip ${labelFilter === l.id ? 'chip-active' : ''}`}
+                  onClick={() => setLabelFilter(labelFilter === l.id ? '' : l.id)}
+                >
+                  <span className="dot" style={{ background: '#5C7A6B' }} />
+                  {l.name}
+                </button>
+              ))}
+              {/* Search input */}
+              <div className="relative">
+                <input
+                  ref={searchRef}
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search mail…"
+                  className="h-7 w-48 rounded-sm border border-border bg-elev px-3 text-[12.5px] text-ink placeholder:text-ink-faint outline-none transition-[border-color,box-shadow] duration-[120ms] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]"
+                  aria-label="Search inbox"
+                />
+              </div>
+            </div>
           )
         }
       >
-        <span className="label shrink-0">inbox</span>
-        {/* Search input — flexes to fill remaining space, capped so it doesn't
-            dominate at desktop widths. On narrow screens (<sm) it shrinks to
-            its content + a small minimum via `min-w-0`. */}
-        <input
-          ref={searchRef}
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="search…"
-          className="ml-2 min-w-0 flex-1 px-2 py-1 text-xs sm:max-w-64"
-          aria-label="search inbox"
-        />
-        <select
-          className="ml-1 shrink-0 px-2 py-1 text-xs"
-          value={labelFilter}
-          onChange={(e) => setLabelFilter(e.target.value)}
-          aria-label="filter by label"
-          title="filter by label"
-        >
-          <option value="">all labels</option>
-          {labels.map((l) => (
-            <option key={l.id} value={l.id}>{l.name}</option>
-          ))}
-        </select>
+        <div className="flex items-baseline gap-2">
+          <span className="text-[15px] font-semibold text-ink">Inbox</span>
+          {threadCount > 0 && (
+            <span className="tnum text-[12px] text-ink-faint">{threadCount} conversation{threadCount === 1 ? '' : 's'}</span>
+          )}
+        </div>
       </Toolbar>
 
       {threads === null && !err && <Loader />}
       {err && <EmptyState title={err} />}
-      {threads && threads.length === 0 && (
-        <EmptyState
-          title="inbox is empty"
-          hint="emails routed to your address(es) will appear here once received."
-        />
+      {threads && threads.length === 0 && !query && (
+        <EmptyState title="No conversations" hint="Emails routed to your address will appear here." />
       )}
-      {threads && threads.length > 0 && filteredThreads?.length === 0 && (
-        <EmptyState
-          title="no matches"
-          hint={`nothing in your inbox matches "${query}".`}
-        />
+      {threads && filteredThreads?.length === 0 && (query || labelFilter) && (
+        <EmptyState title="No conversations" hint="Try clearing the filter." />
       )}
+
       {threads && filteredThreads && filteredThreads.length > 0 && (
         <ul className="flex-1 overflow-y-auto">
           {filteredThreads.map((t, i) => {
             const dec = decrypted.get(t.id) ?? {};
             const sender = labelFor(t);
-            const isSelected = i === selectedIdx;
+            const isKeySelected = i === selectedIdx;
+            const isBulkSelected = selected.has(t.id);
+            const isUnread = t.unread_count > 0;
             const subject = dec.subject?.trim() || (sessionPriv() ? '(no subject)' : '[encrypted]');
             const preview = dec.snippet?.trim() ?? '';
+
             return (
               <li
                 key={t.id}
                 ref={(el) => { rowRefs.current[i] = el; }}
-                className={
-                  'row ' +
-                  (t.unread_count > 0 ? 'unread ' : '') +
-                  (isSelected ? 'inv ' : '') +
-                  (selected.has(t.id) ? 'selected' : '')
-                }
+                className={[
+                  'group relative grid items-center gap-3.5 px-[18px] py-3 border-b border-border cursor-pointer transition-colors duration-[120ms]',
+                  'grid-cols-[32px_minmax(160px,1fr)_minmax(0,2fr)_auto]',
+                  isBulkSelected ? 'bg-accent-soft' : isKeySelected ? 'bg-hover' : 'hover:bg-hover',
+                ].join(' ')}
                 onClick={() => nav(`/thread/${t.id}`)}
               >
+                {/* Unread accent dot on left edge */}
+                {isUnread && (
+                  <span
+                    className="absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-accent"
+                    aria-label="unread"
+                  />
+                )}
+
+                {/* Avatar-as-checkbox */}
                 <Avatar
                   seed={t.first_from_addr ?? sender}
-                  selected={selected.has(t.id)}
+                  size={32}
+                  selected={isBulkSelected}
                   onToggle={() => toggleSelected(t.id)}
                 />
-                <div className="min-w-0">
-                  {/* Top row: bold sender on the left, count + star chips
-                      on the right of the same line. */}
-                  <div className="flex items-baseline gap-2">
-                    <span className="row-sender truncate">{sender}</span>
-                    {t.message_count > 1 && (
-                      <span className="text-mute text-2xs">{t.message_count}</span>
-                    )}
-                    {t.has_starred && <span className="text-2xs">★</span>}
+
+                {/* Sender name */}
+                <div className={`truncate text-[13.5px] font-medium ${isUnread ? 'text-ink' : 'text-ink-muted'}`}>
+                  {sender}
+                  {t.message_count > 1 && (
+                    <span className="ml-1.5 text-[11px] text-ink-faint">{t.message_count}</span>
+                  )}
+                </div>
+
+                {/* Subject + preview */}
+                <div className="min-w-0 truncate text-[13.5px]">
+                  <span className={isUnread ? 'font-semibold text-ink' : 'text-ink-muted'}>
+                    {subject}
+                  </span>
+                  {preview && (
+                    <>
+                      <span className="mx-1.5 text-ink-faint">·</span>
+                      <span className="text-ink-faint">{preview}</span>
+                    </>
+                  )}
+                </div>
+
+                {/* Meta: label + lock + time — hidden on hover, replaced by actions */}
+                <div className="relative flex items-center gap-2">
+                  <div className={`flex items-center gap-2 transition-opacity duration-[120ms] ${isBulkSelected ? 'opacity-0' : 'group-hover:opacity-0'}`}>
+                    {/* Lock icon (encryption indicator) */}
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="text-ink-faint opacity-60 shrink-0"
+                      aria-label="end-to-end encrypted"
+                    >
+                      <rect x="3" y="7" width="10" height="7" rx="1.5" />
+                      <path d="M5.5 7V5a2.5 2.5 0 1 1 5 0v2" />
+                    </svg>
+                    <span className="tnum text-[12px] text-ink-faint whitespace-nowrap font-mono">
+                      {relativeDate(t.last_message_at)}
+                    </span>
                   </div>
-                  {/* Bottom row: subject, then preview in muted text after
-                      a separator. Both truncate to one line each so the row
-                      height stays stable. */}
-                  <div className="text-xs truncate">
-                    <span>{subject}</span>
-                    {preview && (
-                      <>
-                        <span className="text-mute mx-1.5">·</span>
-                        <span className="text-mute">{preview}</span>
-                      </>
-                    )}
+
+                  {/* Hover-revealed action cluster */}
+                  <div className={`absolute right-0 flex items-center gap-1 transition-opacity duration-[120ms] opacity-0 ${isBulkSelected ? '' : 'group-hover:opacity-100'}`}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost p-1.5"
+                      onClick={(e) => deleteThread(e, t.id)}
+                      title="Delete thread"
+                    >
+                      <TrashIcon />
+                    </button>
                   </div>
                 </div>
-                <div className="text-2xs whitespace-nowrap">
-                  {relativeDate(t.last_message_at)}
-                </div>
-                <button
-                  type="button"
-                  className="btn label"
-                  onClick={(e) => deleteThread(e, t.id)}
-                  title="delete thread"
-                >
-                  delete
-                </button>
               </li>
             );
           })}
         </ul>
       )}
     </div>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
   );
 }

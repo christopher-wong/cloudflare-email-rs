@@ -10,6 +10,8 @@
 
 import { useEffect, useState } from 'react';
 
+import EmptyState from '@/components/EmptyState';
+import Loader from '@/components/Loader';
 import Toolbar from '@/components/Toolbar';
 import * as api from '@/lib/api';
 
@@ -31,16 +33,81 @@ interface SecretLinkRow {
   self_destructed?: boolean;
 }
 
+// Lock glyph for status column
+function LockIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="7" width="10" height="7" rx="1.5" />
+      <path d="M5.5 7V5a2.5 2.5 0 1 1 5 0v2" />
+    </svg>
+  );
+}
+
+function LinkListIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  );
+}
+
+type RowStatus = 'self-destructed' | 'revoked' | 'expired' | 'opened' | 'active';
+
+function StatusPill({ status }: { status: RowStatus }) {
+  const variants: Record<RowStatus, string> = {
+    opened:          'status status-on',
+    active:          'status status-wait',
+    expired:         'status status-err',
+    revoked:         'status',
+    'self-destructed': 'status status-err',
+  };
+  const labels: Record<RowStatus, string> = {
+    opened:          'opened',
+    active:          'pending',
+    expired:         'expired',
+    revoked:         'revoked',
+    'self-destructed': 'self-destructed',
+  };
+  return (
+    <span className={variants[status]}>
+      <span className="dot" />
+      {labels[status]}
+    </span>
+  );
+}
+
 export default function Secrets() {
   const [rows, setRows] = useState<SecretLinkRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busyToken, setBusyToken] = useState<string | null>(null);
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const load = async () => {
     try {
       setRows(await api.get<SecretLinkRow[]>('/api/secret/mine'));
     } catch (e: any) {
-      setErr(e?.message || 'failed to load');
+      setErr(e?.message || 'Failed to load.');
     }
   };
 
@@ -55,7 +122,7 @@ export default function Secrets() {
       await api.post(`/api/secret/${encodeURIComponent(token)}/revoke`, {});
       await load();
     } catch (e: any) {
-      setErr(e?.message || 'revoke failed');
+      setErr(e?.message || 'Revoke failed.');
     } finally {
       setBusyToken(null);
     }
@@ -65,41 +132,82 @@ export default function Secrets() {
     const url = `${window.location.origin}/s/${token}`;
     try {
       await navigator.clipboard.writeText(url);
+      setCopiedToken(token);
+      setTimeout(() => setCopiedToken(null), 1500);
     } catch {
-      // Older browsers / non-https: fall back to a transient text selection.
       prompt('Copy link', url);
     }
   };
 
   return (
     <div className="flex h-full flex-col">
-      <Toolbar>
-        <span className="label">secret links</span>
+      <Toolbar
+        right={
+          <a href="/share" className="btn btn-primary">
+            + Create link
+          </a>
+        }
+      >
+        <span className="eyebrow">share</span>
+        <span className="text-ink-faint text-[13px]">/</span>
+        <span className="text-[26px] font-semibold tracking-tight text-ink">Secret links</span>
       </Toolbar>
-      {err && <div className="inv px-3 py-2 text-sm">{err}</div>}
-      {!rows && <div className="text-mute p-4 text-sm">loading…</div>}
-      {rows && rows.length === 0 && (
-        <div className="text-mute p-4 text-sm">
-          no secret links yet. enable 🔒 secret mode in compose to send one.
+
+      {/* Error notice */}
+      {err && (
+        <div className="mx-5 mt-4 rounded-md border border-[#F2D6D6] bg-danger-soft px-3 py-2 text-[13px] text-danger">
+          {err}
         </div>
       )}
+
+      {/* Loading */}
+      {!rows && !err && (
+        <div className="flex flex-1 items-center justify-center">
+          <Loader />
+        </div>
+      )}
+
+      {/* Empty state */}
+      {rows && rows.length === 0 && (
+        <EmptyState
+          icon={<LinkListIcon />}
+          title="No secret links yet"
+          hint="Create a password-protected link to share a message or files securely."
+          action={
+            <a href="/share" className="btn btn-primary">
+              Create your first link
+            </a>
+          }
+        />
+      )}
+
+      {/* Data table */}
       {rows && rows.length > 0 && (
-        <table className="w-full text-sm">
-          <thead className="hair-b text-mute text-left text-xs uppercase">
-            <tr>
-              <th className="px-3 py-2">recipient</th>
-              <th className="px-3 py-2">status</th>
-              <th className="px-3 py-2">policy</th>
-              <th className="px-3 py-2">opens</th>
-              <th className="px-3 py-2">created</th>
-              <th className="px-3 py-2">expires</th>
-              <th className="px-3 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
+        <div className="mx-5 my-5">
+          {/* Page heading above table */}
+          <div className="mb-4">
+            <p className="text-[13.5px] text-ink-muted">
+              {rows.length} link{rows.length === 1 ? '' : 's'} — manage access and revoke from here.
+            </p>
+          </div>
+
+          <div className="card overflow-hidden">
+            {/* Table header */}
+            <div className="grid items-center gap-3.5 border-b border-border bg-bg px-[18px] py-2.5 text-[10.5px] font-medium uppercase tracking-wider text-ink-faint"
+              style={{ gridTemplateColumns: '1.6fr 0.9fr 1fr 0.5fr 1.1fr auto' }}
+            >
+              <div>Recipient / Subject</div>
+              <div>Status</div>
+              <div>Policy</div>
+              <div className="text-right">Opens</div>
+              <div>Created</div>
+              <div />
+            </div>
+
+            {/* Table rows */}
             {rows.map((r) => {
               const expired = r.expires_at < Date.now();
-              const status = r.self_destructed
+              const status: RowStatus = r.self_destructed
                 ? 'self-destructed'
                 : r.revoked
                   ? 'revoked'
@@ -109,60 +217,86 @@ export default function Secrets() {
                       ? 'opened'
                       : 'active';
               const dim = r.revoked || expired || r.self_destructed;
+
               return (
-                <tr key={r.token} className={`hair-b ${dim ? 'text-mute' : ''}`}>
-                  <td className="px-3 py-2 break-all">
-                    {r.recipient_addr || (
-                      <span className="text-mute italic">share link</span>
+                <div
+                  key={r.token}
+                  className={
+                    'grid items-center gap-3.5 border-b border-border px-[18px] py-3 last:border-0 hover:bg-hover transition-colors ' +
+                    (dim ? 'opacity-60' : '')
+                  }
+                  style={{ gridTemplateColumns: '1.6fr 0.9fr 1fr 0.5fr 1.1fr auto' }}
+                >
+                  {/* Recipient / type */}
+                  <div className="min-w-0">
+                    {r.recipient_addr ? (
+                      <span className="block truncate font-mono text-[12.5px] text-ink" title={r.recipient_addr}>
+                        {r.recipient_addr}
+                      </span>
+                    ) : (
+                      <span className="text-[13px] text-ink-muted italic">Share link</span>
                     )}
-                  </td>
-                  <td className="px-3 py-2">
-                    {status}
-                    {r.self_destructed && (
-                      <span
-                        className="text-mute ml-1 text-xs"
-                        title="too many failed unlocks; content deleted"
-                      >
-                        (10 fails)
+                    {r.hint && (
+                      <span className="block truncate text-[11.5px] text-ink-faint" title={r.hint}>
+                        hint: {r.hint}
                       </span>
                     )}
-                  </td>
-                  <td className="px-3 py-2">{policyLabel(r.policy)}</td>
-                  <td className="px-3 py-2">
-                    {r.opens_count}
+                  </div>
+
+                  {/* Status */}
+                  <div className="flex items-center gap-1.5">
+                    <StatusPill status={status} />
+                    {status === 'active' && (
+                      <LockIcon />
+                    )}
+                  </div>
+
+                  {/* Policy */}
+                  <div className="font-mono text-[12px] text-ink-muted">
+                    {policyLabel(r.policy)}
+                  </div>
+
+                  {/* Opens */}
+                  <div className="text-right">
+                    <span className="tnum text-[13px] text-ink">{r.opens_count}</span>
                     {r.fail_count > 0 && (
-                      <span className="ml-2 text-xs text-red-600">
+                      <span className="ml-1.5 text-[11px] text-danger">
                         {r.fail_count} failed
                       </span>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-xs">{formatDate(r.created_at)}</td>
-                  <td className="px-3 py-2 text-xs">{formatDate(r.expires_at)}</td>
-                  <td className="px-3 py-2 text-right">
+                  </div>
+
+                  {/* Created date */}
+                  <div className="font-mono text-[12px] text-ink-muted">
+                    {formatDate(r.created_at)}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-1.5">
                     {!dim && (
                       <>
                         <button
-                          className="btn label py-1 px-2 text-xs"
+                          className="btn btn-sm btn-ghost"
                           onClick={() => void copyUrl(r.token)}
-                          title="copy share url"
+                          title="Copy share URL"
                         >
-                          copy link
+                          {copiedToken === r.token ? 'Copied' : 'Copy link'}
                         </button>
                         <button
-                          className="btn label ml-1 py-1 px-2 text-xs"
+                          className="btn btn-sm btn-danger"
                           onClick={() => void revoke(r.token)}
                           disabled={busyToken === r.token}
                         >
-                          {busyToken === r.token ? '…' : 'revoke'}
+                          {busyToken === r.token ? '…' : 'Revoke'}
                         </button>
                       </>
                     )}
-                  </td>
-                </tr>
+                  </div>
+                </div>
               );
             })}
-          </tbody>
-        </table>
+          </div>
+        </div>
       )}
     </div>
   );
