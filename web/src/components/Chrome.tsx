@@ -39,6 +39,9 @@ const NAV: NavItem[] = [
   { to: '/drafts', label: 'drafts' },
   { to: '/sent', label: 'sent' },
   { to: '/labels', label: 'labels' },
+  { to: '/share', label: 'share' },
+  { to: '/secrets', label: 'secrets' },
+  { to: '/hosted', label: 'hosted' },
   { to: '/settings', label: 'settings' },
   { to: '/admin', label: 'admin', adminOnly: true },
 ];

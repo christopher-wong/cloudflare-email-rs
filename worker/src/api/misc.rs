@@ -1,22 +1,17 @@
-use serde::Serialize;
 use worker::*;
+
+use api_types::PublicConfig;
 
 use crate::config::AppConfig;
 use crate::error::ApiResult;
 
-#[derive(Serialize)]
-struct PublicConfig<'a> {
-    primary_domain: &'a str,
-    additional_domains: &'a [String],
-    app_host: &'a str,
-    app_name: &'a str,
-}
-
 pub async fn public_config(cfg: &AppConfig) -> ApiResult<Response> {
+    // Build the owned struct each call. The endpoint is hit infrequently
+    // (on first SPA load) so the clones are not a concern.
     super::json_ok(&PublicConfig {
-        primary_domain: &cfg.primary_domain,
-        additional_domains: &cfg.additional_domains,
-        app_host: &cfg.app_host,
-        app_name: &cfg.app_name,
+        primary_domain: cfg.primary_domain.clone(),
+        additional_domains: cfg.additional_domains.clone(),
+        app_host: cfg.app_host.clone(),
+        app_name: cfg.app_name.clone(),
     })
 }

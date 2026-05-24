@@ -1,7 +1,14 @@
 //! WebAuthn registration & login + bootstrap + logout.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use worker::*;
+
+use api_types::{
+    AuthenticatorSelection, BootstrapReq, BootstrapResp, Extensions, LoginOptions,
+    LoginVerifyReq, PrfEval, PrfInput, PubKeyCredParam, PubKeyUser, RecoveryBeginReq,
+    RecoveryBeginResp, RecoveryVerifyReq, RegisterOptions, RegisterOptionsReq,
+    RegisterVerifyReq, RegisterVerifyResp, RpInfo,
+};
 
 use crate::b64;
 use crate::config::{rp_id, rp_origin, AppConfig};
@@ -13,17 +20,7 @@ use super::{registry_stub, stub_json, stub_passthrough};
 
 // ---- Bootstrap (one-shot, no auth) -------------------------------------
 
-#[derive(Deserialize)]
-struct BootstrapReq {
-    handle: String,
-    addresses: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct BootstrapResp {
-    invite_token: String,
-    enroll_url: String,
-}
+// BootstrapReq / BootstrapResp live in api-types.
 
 pub async fn bootstrap(
     mut req: HttpRequest,
@@ -52,59 +49,9 @@ pub async fn bootstrap(
 }
 
 // ---- Registration ceremony --------------------------------------------
-
-#[derive(Deserialize)]
-struct RegisterOptionsReq { invite_token: String }
-
-#[derive(Serialize)]
-struct RegisterOptions {
-    rp: RpInfo,
-    user: PubKeyUser,
-    challenge: String,
-    pub_key_cred_params: Vec<PubKeyCredParam>,
-    authenticator_selection: AuthenticatorSelection,
-    timeout: u32,
-    attestation: String,
-    extensions: Extensions,
-    /// Server-issued ID we'll need on /verify to look the challenge back up.
-    challenge_id: String,
-    /// Salt the client passes to PRF eval to derive its wrap key.
-    prf_salt_b64: String,
-    /// Echo invite info to populate UI without a second round trip.
-    invite_handle: Option<String>,
-    invite_addresses: Vec<String>,
-    invite_is_admin: bool,
-}
-
-#[derive(Serialize)]
-struct RpInfo { id: String, name: String }
-
-#[derive(Serialize)]
-struct PubKeyUser { id: String, name: String, display_name: String }
-
-#[derive(Serialize)]
-struct PubKeyCredParam { #[serde(rename = "type")] ty: String, alg: i32 }
-
-#[derive(Serialize)]
-struct AuthenticatorSelection {
-    user_verification: String,
-    resident_key: String,
-    require_resident_key: bool,
-}
-
-#[derive(Serialize)]
-struct Extensions {
-    /// WebAuthn PRF extension request: we ask for evaluation against a
-    /// per-RP salt so the authenticator can return a deterministic 32-byte
-    /// secret. The client uses it as the seed for an HKDF key that wraps the
-    /// user's X25519 private key. Without PRF the client falls back to
-    /// password-derived wrapping (out of scope for v1 — registration aborts).
-    prf: PrfInput,
-}
-#[derive(Serialize)]
-struct PrfInput { eval: PrfEval }
-#[derive(Serialize)]
-struct PrfEval { first: String }
+//
+// Every request/response struct lives in `api-types` so the OpenAPI
+// spec and this handler agree on shapes by construction.
 
 pub async fn register_options(
     mut req: HttpRequest,
@@ -182,28 +129,7 @@ pub async fn register_options(
     })
 }
 
-#[derive(Deserialize)]
-struct RegisterVerifyReq {
-    invite_token: String,
-    challenge_id: String,
-    handle: Option<String>,
-    display_name: Option<String>,
-    cred_label: Option<String>,
-    /// AuthenticatorAttestationResponse
-    attestation: AttestationResp,
-    /// X25519 public key bytes (32B), base64url.
-    pub_key_b64: String,
-    /// Two wraps required: one passkey, one recovery. Pass-through to the DO.
-    wraps: Vec<serde_json::Value>,
-}
-
-#[derive(Deserialize)]
-struct AttestationResp {
-    credential_id_b64: String,
-    client_data_json_b64: String,
-    attestation_object_b64: String,
-    transports: Option<Vec<String>>,
-}
+// RegisterVerifyReq / AttestationResp live in api-types.
 
 pub async fn register_verify(
     mut req: HttpRequest,
@@ -255,13 +181,7 @@ pub async fn register_verify(
         .map(|t| t.join(","))
         .filter(|s| !s.is_empty());
 
-    #[derive(Deserialize)]
-    struct Done {
-        user_id: String,
-        is_admin: bool,
-        addresses: Vec<String>,
-    }
-    let done: Done = stub_json(
+    let done: RegisterVerifyResp = stub_json(
         &stub,
         Method::Post,
         "/users/register",
@@ -310,17 +230,6 @@ pub async fn register_verify(
 
 // ---- Login ceremony ---------------------------------------------------
 
-#[derive(Serialize)]
-struct LoginOptions {
-    rp_id: String,
-    challenge: String,
-    challenge_id: String,
-    timeout: u32,
-    user_verification: String,
-    extensions: Extensions,
-    prf_salt_b64: String,
-}
-
 pub async fn login_options(
     _req: HttpRequest,
     env: &Env,
@@ -348,15 +257,6 @@ pub async fn login_options(
         },
         prf_salt_b64: b64::url_encode(&prf_salt),
     })
-}
-
-#[derive(Deserialize)]
-struct LoginVerifyReq {
-    challenge_id: String,
-    credential_id_b64: String,
-    client_data_json_b64: String,
-    authenticator_data_b64: String,
-    signature_b64: String,
 }
 
 pub async fn login_verify(
@@ -488,19 +388,6 @@ pub async fn login_verify(
 // they also need to crack the Argon2id-protected passphrase to produce a
 // valid proof. (Passphrase = 12 BIP39 words = ~128 bits.)
 
-#[derive(Deserialize)]
-struct RecoveryBeginReq { handle: String }
-
-#[derive(Serialize)]
-struct RecoveryBeginResp {
-    user_id: String,
-    wrap: crate::registry::KeyWrapView,
-    /// Random token sealed to the user's X25519 pubkey.
-    sealed_proof_b64: String,
-    /// Server-side handle for /verify to look up the expected proof.
-    challenge_id: String,
-}
-
 pub async fn recovery_begin(
     mut req: HttpRequest,
     env: &Env,
@@ -570,13 +457,6 @@ pub async fn recovery_begin(
         sealed_proof_b64: b64::url_encode(&sealed),
         challenge_id: ch.id,
     })
-}
-
-#[derive(Deserialize)]
-struct RecoveryVerifyReq {
-    challenge_id: String,
-    /// The decrypted proof token, base64url.
-    proof_b64: String,
 }
 
 pub async fn recovery_verify(

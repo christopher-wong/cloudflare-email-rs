@@ -1,8 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["worker", "openapi-gen"]
+members = ["worker", "openapi-gen", "api-types"]
 # openapi-gen is a native (host-target) binary that generates `openapi.json`
 # from #[utoipa::path] annotations. It is never built for wasm.
+# api-types holds every HTTP request/response struct shared between
+# worker (wasm) and openapi-gen (native) — single source of truth so
+# the spec can't drift from the handlers.
 default-members = ["worker"]
 
 [profile.release]

@@ -4,8 +4,9 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 
-# Native-only binary. The worker crate is wasm-only, so we cannot reuse its
-# handler types directly — schemas here are hand-mirrored from worker/src/api.
+# Native-only binary. Reads HTTP request/response shapes from the
+# `cfemail-api-types` workspace crate (also consumed by the wasm
+# worker) so the spec can't drift from the handlers.
 # Build: `cargo run -p openapi-gen` (writes openapi.json at the repo root).
 
 [[bin]]
@@ -16,3 +17,4 @@ path = "src/main.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 utoipa = { version = "5", features = ["preserve_order", "preserve_path_order"] }
+cfemail-api-types = { path = "../api-types" }

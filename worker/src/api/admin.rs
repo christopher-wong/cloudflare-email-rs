@@ -1,28 +1,12 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use worker::*;
+
+use api_types::{AddAddressReq as AddAddrReq, CreateInviteReq, CreateInviteResp};
 
 use crate::config::AppConfig;
 use crate::error::{ApiError, ApiResult};
 
 use super::{registry_stub, require_admin_session, require_auth, stub_json, stub_passthrough};
-
-#[derive(Deserialize)]
-struct CreateInviteReq {
-    handle: Option<String>,
-    addresses: Vec<String>,
-    #[serde(default)]
-    is_admin: bool,
-}
-
-#[derive(Serialize)]
-struct CreateInviteResp {
-    token: String,
-    enroll_url: String,
-    handle: Option<String>,
-    addresses: Vec<String>,
-    is_admin: bool,
-    expires_at: i64,
-}
 
 pub async fn create_invite(
     mut req: HttpRequest,
@@ -273,9 +257,6 @@ pub async fn restore(mut req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiRe
         "restored_mailboxes": restored_mailboxes,
     }))
 }
-
-#[derive(Deserialize, Serialize)]
-struct AddAddrReq { user_id: String, address: String }
 
 pub async fn add_address(
     mut req: HttpRequest,

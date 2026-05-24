@@ -388,28 +388,25 @@ pub fn labels_delete() {}
 pub fn message_labels_toggle() {}
 
 // ---- Attachments ---------------------------------------------------------
+//
+// Upload moved to /api/uploads/* (unified pipeline). The endpoints
+// here are read/cleanup paths only.
 
 #[utoipa::path(
-    post,
-    path = "/api/attachments",
+    get,
+    path = "/api/messages/{message_id}/attachments",
     tag = "attachments",
-    description = "Upload an encrypted attachment blob. Query params: mime, filename_ct_b64, draft_id. Body is raw bytes.",
+    description = "List attachment metadata for a message. Filenames are ciphertext (sealed-to-self); the client decrypts.",
     params(
-        ("mime" = Option<String>, Query),
-        ("filename_ct_b64" = Option<String>, Query),
-        ("draft_id" = Option<String>, Query),
-    ),
-    request_body(
-        content = String,
-        content_type = "application/octet-stream",
-        description = "Raw encrypted attachment bytes."
+        ("message_id" = String, Path),
     ),
     responses(
-        (status = 200, body = AttachmentUploadResp),
+        (status = 200, body = Vec<AttachmentView>),
         (status = 401, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
     ),
 )]
-pub fn attachments_upload() {}
+pub fn attachments_list_for_message() {}
 
 #[utoipa::path(
     get,
@@ -440,6 +437,292 @@ pub fn attachments_download() {}
     ),
 )]
 pub fn attachments_delete() {}
+
+// ---- Unified upload pipeline --------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/api/uploads/init",
+    tag = "uploads",
+    description = "Begin an R2 multipart upload. Returns the (r2_key, upload_id) handle the client uses for /parts and /complete. The `kind` picks the R2 prefix (attach / hosted / secret) and post-complete bookkeeping.",
+    request_body = UploadInitReq,
+    responses(
+        (status = 200, body = UploadInitResp),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn uploads_init() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/uploads/parts",
+    tag = "uploads",
+    description = "Upload one part of a multipart upload. Body is raw bytes (≤ 6 MiB). Required headers: x-r2-key, x-upload-id, x-part-number (1-indexed).",
+    params(
+        ("x-r2-key" = String, Header, description = "From /init"),
+        ("x-upload-id" = String, Header, description = "From /init"),
+        ("x-part-number" = u16, Header, description = "1-indexed; ≥ 1"),
+    ),
+    request_body(
+        content = String,
+        content_type = "application/octet-stream",
+        description = "Raw part bytes."
+    ),
+    responses(
+        (status = 200, body = UploadPartResp),
+        (status = 400, body = ErrorResponse),
+        (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+    ),
+)]
+pub fn uploads_parts() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/uploads/complete",
+    tag = "uploads",
+    description = "Finalize a multipart upload. For kind=attach, also registers an attachment row in MailboxDO and returns `attachment_id`.",
+    request_body = UploadCompleteReq,
+    responses(
+        (status = 200, body = UploadCompleteResp),
+        (status = 400, body = ErrorResponse),
+        (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+    ),
+)]
+pub fn uploads_complete() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/uploads/abort",
+    tag = "uploads",
+    description = "Abort an in-flight multipart upload. Best-effort cleanup; R2 also expires abandoned multiparts eventually.",
+    request_body = UploadAbortReq,
+    responses(
+        (status = 200, body = OkResponse),
+        (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+    ),
+)]
+pub fn uploads_abort() {}
+
+// ---- Secret links --------------------------------------------------------
+//
+// Password-protected E2E share links. Sender uploads ciphertext via
+// /api/uploads (kind=secret), then mints the row here. The recipient
+// hits the public viewer endpoints with the URL they were sent
+// out-of-band.
+
+#[utoipa::path(
+    post,
+    path = "/api/secret/create",
+    tag = "secret",
+    description = "Mint a secret link from previously-uploaded ciphertext + the password-derived check value.",
+    request_body = SecretCreateReq,
+    responses(
+        (status = 200, body = SecretCreateResp),
+        (status = 400, body = ErrorResponse),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn secret_create() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/secret/mine",
+    tag = "secret",
+    description = "Sender dashboard: list every secret link the current user has minted.",
+    responses(
+        (status = 200, body = Vec<SecretSenderRow>),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn secret_mine() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/secret/{token}/revoke",
+    tag = "secret",
+    description = "Revoke a secret link and delete its R2 attachment blobs.",
+    params(
+        ("token" = String, Path),
+    ),
+    responses(
+        (status = 200, body = SecretRevokeResp),
+        (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+    ),
+)]
+pub fn secret_revoke() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/s/{token}",
+    tag = "secret",
+    description = "Public viewer metadata (no password required). Returns hint, sender display, KDF params, salt, policy + state. The viewer derives Argon2id locally before calling /open.",
+    params(
+        ("token" = String, Path),
+    ),
+    responses(
+        (status = 200, body = SecretLinkPublicView),
+        (status = 404, body = ErrorResponse),
+        (status = 410, description = "self-destructed", body = ErrorResponse),
+    ),
+)]
+pub fn secret_view() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/s/{token}/open",
+    tag = "secret",
+    description = "Public unlock. Server compares password_check_b64 against the stored check value. Bumps fail_count on miss; self-destructs the row at the 10th miss.",
+    params(
+        ("token" = String, Path),
+    ),
+    request_body = SecretLinkOpenReq,
+    responses(
+        (status = 200, body = SecretLinkOpenResp),
+        (status = 401, description = "bad password", body = ErrorResponse),
+        (status = 410, description = "expired / revoked / self-destructed", body = ErrorResponse),
+    ),
+)]
+pub fn secret_open() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/s/{token}/attachment",
+    tag = "secret",
+    description = "Public per-chunk ciphertext fetch. Re-verifies the password check; does NOT advance policy state. Optional offset+length for ranged reads (one chunk per call).",
+    params(
+        ("token" = String, Path),
+    ),
+    request_body = SecretAttachmentReq,
+    responses(
+        (status = 200, description = "Raw ciphertext for the requested range.", body = String, content_type = "application/octet-stream"),
+        (status = 401, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+        (status = 410, body = ErrorResponse),
+    ),
+)]
+pub fn secret_attachment() {}
+
+// ---- Hosted downloads ---------------------------------------------------
+//
+// E2E hosted links — Firefox Send / Wormhole.app model. CEK lives in
+// the URL fragment, never reaches the server. Created entirely
+// client-side after the ciphertext is uploaded via /api/uploads
+// (kind=hosted).
+
+#[utoipa::path(
+    post,
+    path = "/api/hosted/create",
+    tag = "hosted",
+    description = "Mint a hosted-download row. Server never sees the CEK; the client embeds it in the URL fragment when emailing the link.",
+    request_body = HostedCreateReq,
+    responses(
+        (status = 200, body = HostedCreateResp),
+        (status = 400, body = ErrorResponse),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn hosted_create() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/hosted/mine",
+    tag = "hosted",
+    description = "Sender dashboard: list hosted links + per-row `sender_cek_wrap_b64` so the sender can re-decrypt locally.",
+    responses(
+        (status = 200, body = Vec<HostedSenderRow>),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn hosted_mine() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/hosted/{token}/revoke",
+    tag = "hosted",
+    description = "Revoke a hosted-download link and delete its R2 blobs.",
+    params(
+        ("token" = String, Path),
+    ),
+    responses(
+        (status = 200, body = HostedRevokeResp),
+        (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+    ),
+)]
+pub fn hosted_revoke() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/d/{token}",
+    tag = "hosted",
+    description = "Public landing-page metadata. Sender identity (cleartext), file list (cleartext filenames + mimes), expiry. The CEK to decrypt the bytes lives in the URL fragment.",
+    params(
+        ("token" = String, Path),
+    ),
+    responses(
+        (status = 200, body = HostedPublicView),
+        (status = 404, body = ErrorResponse),
+    ),
+)]
+pub fn hosted_view() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/d/{token}/file",
+    tag = "hosted",
+    description = "Stream one file's ciphertext. Supports HTTP Range for resumable browser downloads. Server returns `Content-Type: application/octet-stream` because it doesn't know the real mime.",
+    params(
+        ("token" = String, Path),
+        ("r2_key" = String, Query, description = "Must be a key listed on this row's `files`."),
+        ("Range" = Option<String>, Header, description = "Optional `bytes=START-END`."),
+    ),
+    responses(
+        (status = 200, description = "Full ciphertext.", body = String, content_type = "application/octet-stream"),
+        (status = 206, description = "Partial content (Range).", body = String, content_type = "application/octet-stream"),
+        (status = 404, body = ErrorResponse),
+        (status = 409, description = "expired or revoked", body = ErrorResponse),
+    ),
+)]
+pub fn hosted_download() {}
+
+// ---- Realtime ------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/api/realtime",
+    tag = "mail",
+    description = "WebSocket upgrade. Handed off to the MailboxDO which broadcasts message.new / draft.upsert / draft.delete events.",
+    responses(
+        (status = 101, description = "Upgrade to WebSocket."),
+        (status = 400, body = ErrorResponse),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn realtime() {}
+
+// ---- Thread cascade delete ----------------------------------------------
+
+#[utoipa::path(
+    delete,
+    path = "/api/threads/{thread_id}",
+    tag = "mail",
+    description = "Cascade-delete every message + attachment + R2 blob in a thread. Returns the count of R2 objects swept.",
+    params(
+        ("thread_id" = String, Path),
+    ),
+    responses(
+        (status = 200, body = DeleteThreadResp),
+        (status = 401, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+    ),
+)]
+pub fn delete_thread() {}
 
 // ---- Admin ---------------------------------------------------------------
 
@@ -513,6 +796,24 @@ pub fn admin_add_address() {}
 pub fn admin_remove_address() {}
 
 #[utoipa::path(
+    delete,
+    path = "/api/admin/invites/{token}",
+    tag = "admin",
+    description = "Revoke an unredeemed invite. Refuses if the invite has already been redeemed (those are audit trail).",
+    params(
+        ("token" = String, Path),
+    ),
+    responses(
+        (status = 200, body = OkResponse),
+        (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+        (status = 409, description = "invite already redeemed", body = ErrorResponse),
+    ),
+)]
+pub fn admin_delete_invite() {}
+
+#[utoipa::path(
     get,
     path = "/api/admin/status",
     tag = "admin",
@@ -522,6 +823,48 @@ pub fn admin_remove_address() {}
     ),
 )]
 pub fn admin_status() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/backup",
+    tag = "admin",
+    description = "Dump every DO (registry + every mailbox) to a JSON bundle at `backups/<iso>.json` in R2. Same code path the scheduled daily backup uses.",
+    responses(
+        (status = 200, body = BackupCreateResp),
+        (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+    ),
+)]
+pub fn admin_backup() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/admin/backups",
+    tag = "admin",
+    description = "List backup bundles in R2 + the cron schedule the scheduled handler runs on.",
+    responses(
+        (status = 200, body = BackupListResp),
+        (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+    ),
+)]
+pub fn admin_list_backups() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/admin/restore",
+    tag = "admin",
+    description = "Replay a backup bundle. Registry rows go first (so user_ids exist when MailboxDO rows reference them). Each table uses INSERT OR REPLACE so re-running is idempotent.",
+    request_body = RestoreReq,
+    responses(
+        (status = 200, body = RestoreResp),
+        (status = 400, body = ErrorResponse),
+        (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+    ),
+)]
+pub fn admin_restore() {}
 
 // ---- Misc ----------------------------------------------------------------
 

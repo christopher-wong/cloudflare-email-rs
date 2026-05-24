@@ -12,64 +12,6 @@ use crate::error::{ApiError, ApiResult};
 
 use super::{mailbox_stub, require_auth};
 
-pub async fn upload(mut req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<Response> {
-    let s = require_auth(&req, env).await?;
-    let qs = req.uri().query().unwrap_or("").to_string();
-    let mime = url_param(&qs, "mime").unwrap_or_else(|| "application/octet-stream".into());
-    let filename_ct_b64 = url_param(&qs, "filename_ct_b64");
-    let draft_id = url_param(&qs, "draft_id");
-
-    let body = {
-        use http_body_util::BodyExt;
-        let raw = std::mem::replace(req.body_mut(), worker::Body::empty());
-        let collected = raw
-            .collect()
-            .await
-            .map_err(|e| ApiError::BadRequest(format!("body: {e}")))?;
-        collected.to_bytes().to_vec()
-    };
-    let size = body.len() as i64;
-
-    let r2 = env
-        .bucket("BLOBS")
-        .map_err(|e| ApiError::Internal(format!("R2 binding: {e}")))?;
-    let id = crate::ids::attachment();
-    let key = format!("attach/{}/{}", s.user_id, id);
-    r2.put(&key, body)
-        .http_metadata(HttpMetadata {
-            content_type: Some(mime.clone()),
-            ..Default::default()
-        })
-        .execute()
-        .await
-        .map_err(|e| ApiError::Internal(format!("R2 put: {e}")))?;
-
-    // Register in mailbox (unattached to a message until send).
-    let stub = mailbox_stub(env, &s.user_id)?;
-    let _: serde_json::Value = super::stub_json(
-        &stub,
-        Method::Post,
-        "/attachments",
-        Some(serde_json::json!({
-            "id": id,
-            "message_id": null,
-            "draft_id": draft_id,
-            "r2_key": key,
-            "filename_ct_b64": filename_ct_b64,
-            "mime": mime,
-            "size_bytes": size,
-        })),
-    )
-    .await?;
-
-    super::json_ok(&serde_json::json!({
-        "id": id,
-        "r2_key": key,
-        "size_bytes": size,
-        "mime": mime,
-    }))
-}
-
 /// List attachments for a single message. The frontend hits this once
 /// per thread render and decrypts filenames client-side.
 pub async fn list_for_message(
@@ -136,6 +78,7 @@ pub async fn delete(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<
     super::stub_passthrough(&stub, Method::Delete, &path, None).await
 }
 
+#[allow(dead_code)]
 fn url_param(qs: &str, name: &str) -> Option<String> {
     for pair in qs.split('&') {
         let mut it = pair.splitn(2, '=');

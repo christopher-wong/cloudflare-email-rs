@@ -11,7 +11,7 @@
 # Configuration lives in wrangler.jsonc (vars block). The Rust target is
 # wasm32-unknown-unknown; `make install` adds it if missing.
 
-.PHONY: install web worker build dev deploy clean check test test-web test-worker openapi
+.PHONY: install web worker build dev deploy clean check test test-web test-worker openapi check-openapi
 
 install:
 	npm install
@@ -55,5 +55,25 @@ clean:
 
 # Regenerate openapi.json from the #[utoipa::path] annotations in
 # openapi-gen/. Runs natively (not wasm) and writes to repo root.
+# Also regenerates web/src/lib/api-types.ts from the fresh spec so
+# the frontend stays in sync — TS typecheck will catch any drift on
+# the next `make check`.
+#
+# Drift between worker handlers and the spec is already prevented
+# structurally: every request/response struct lives once, in the
+# `cfemail-api-types` workspace crate. A handler that grows a field
+# without updating the shared struct fails to compile in `worker/`.
 openapi:
 	cargo run -q -p openapi-gen
+	npm --prefix web run gen:types
+
+# CI hook: regenerate the spec + TS types and fail if anything moved
+# (i.e. a contributor edited an api-types struct, ran the worker
+# tests, but forgot `make openapi`).
+check-openapi:
+	@$(MAKE) -s openapi
+	@if ! git diff --quiet -- openapi.json web/src/lib/api-types.ts; then \
+		echo "ERROR: openapi.json or api-types.ts is out of date — run 'make openapi' and commit."; \
+		git --no-pager diff -- openapi.json web/src/lib/api-types.ts | head -40; \
+		exit 1; \
+	fi

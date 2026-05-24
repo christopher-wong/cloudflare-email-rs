@@ -665,6 +665,55 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "mail"
+        ],
+        "description": "Cascade-delete every message + attachment + R2 blob in a thread. Returns the count of R2 objects swept.",
+        "operationId": "delete_thread",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteThreadResp"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/messages/{message_id}": {
@@ -805,6 +854,40 @@
             }
           },
           "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/realtime": {
+      "get": {
+        "tags": [
+          "mail"
+        ],
+        "description": "WebSocket upgrade. Handed off to the MailboxDO which broadcasts message.new / draft.upsert / draft.delete events.",
+        "operationId": "realtime",
+        "responses": {
+          "101": {
+            "description": "Upgrade to WebSocket."
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -1129,62 +1212,48 @@
         }
       }
     },
-    "/api/attachments": {
-      "post": {
+    "/api/messages/{message_id}/attachments": {
+      "get": {
         "tags": [
           "attachments"
         ],
-        "description": "Upload an encrypted attachment blob. Query params: mime, filename_ct_b64, draft_id. Body is raw bytes.",
-        "operationId": "attachments_upload",
+        "description": "List attachment metadata for a message. Filenames are ciphertext (sealed-to-self); the client decrypts.",
+        "operationId": "attachments_list_for_message",
         "parameters": [
           {
-            "name": "mime",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "filename_ct_b64",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "draft_id",
-            "in": "query",
-            "required": false,
+            "name": "message_id",
+            "in": "path",
+            "required": true,
             "schema": {
               "type": "string"
             }
           }
         ],
-        "requestBody": {
-          "description": "Raw encrypted attachment bytes.",
-          "content": {
-            "application/octet-stream": {
-              "schema": {
-                "type": "string"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AttachmentUploadResp"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AttachmentView"
+                  }
                 }
               }
             }
           },
           "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -1275,6 +1344,850 @@
           },
           "401": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/uploads/init": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "description": "Begin an R2 multipart upload. Returns the (r2_key, upload_id) handle the client uses for /parts and /complete. The `kind` picks the R2 prefix (attach / hosted / secret) and post-complete bookkeeping.",
+        "operationId": "uploads_init",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadInitReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadInitResp"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/uploads/parts": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "description": "Upload one part of a multipart upload. Body is raw bytes (≤ 6 MiB). Required headers: x-r2-key, x-upload-id, x-part-number (1-indexed).",
+        "operationId": "uploads_parts",
+        "parameters": [
+          {
+            "name": "x-r2-key",
+            "in": "header",
+            "description": "From /init",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-upload-id",
+            "in": "header",
+            "description": "From /init",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-part-number",
+            "in": "header",
+            "description": "1-indexed; ≥ 1",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Raw part bytes.",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadPartResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/uploads/complete": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "description": "Finalize a multipart upload. For kind=attach, also registers an attachment row in MailboxDO and returns `attachment_id`.",
+        "operationId": "uploads_complete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadCompleteReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadCompleteResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/uploads/abort": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "description": "Abort an in-flight multipart upload. Best-effort cleanup; R2 also expires abandoned multiparts eventually.",
+        "operationId": "uploads_abort",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadAbortReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/secret/create": {
+      "post": {
+        "tags": [
+          "secret"
+        ],
+        "description": "Mint a secret link from previously-uploaded ciphertext + the password-derived check value.",
+        "operationId": "secret_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretCreateReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretCreateResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/secret/mine": {
+      "get": {
+        "tags": [
+          "secret"
+        ],
+        "description": "Sender dashboard: list every secret link the current user has minted.",
+        "operationId": "secret_mine",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SecretSenderRow"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/secret/{token}/revoke": {
+      "post": {
+        "tags": [
+          "secret"
+        ],
+        "description": "Revoke a secret link and delete its R2 attachment blobs.",
+        "operationId": "secret_revoke",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretRevokeResp"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/s/{token}": {
+      "get": {
+        "tags": [
+          "secret"
+        ],
+        "description": "Public viewer metadata (no password required). Returns hint, sender display, KDF params, salt, policy + state. The viewer derives Argon2id locally before calling /open.",
+        "operationId": "secret_view",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretLinkPublicView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "self-destructed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/s/{token}/open": {
+      "post": {
+        "tags": [
+          "secret"
+        ],
+        "description": "Public unlock. Server compares password_check_b64 against the stored check value. Bumps fail_count on miss; self-destructs the row at the 10th miss.",
+        "operationId": "secret_open",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretLinkOpenReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretLinkOpenResp"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "bad password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "expired / revoked / self-destructed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/s/{token}/attachment": {
+      "post": {
+        "tags": [
+          "secret"
+        ],
+        "description": "Public per-chunk ciphertext fetch. Re-verifies the password check; does NOT advance policy state. Optional offset+length for ranged reads (one chunk per call).",
+        "operationId": "secret_attachment",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretAttachmentReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Raw ciphertext for the requested range.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hosted/create": {
+      "post": {
+        "tags": [
+          "hosted"
+        ],
+        "description": "Mint a hosted-download row. Server never sees the CEK; the client embeds it in the URL fragment when emailing the link.",
+        "operationId": "hosted_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostedCreateReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostedCreateResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hosted/mine": {
+      "get": {
+        "tags": [
+          "hosted"
+        ],
+        "description": "Sender dashboard: list hosted links + per-row `sender_cek_wrap_b64` so the sender can re-decrypt locally.",
+        "operationId": "hosted_mine",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HostedSenderRow"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hosted/{token}/revoke": {
+      "post": {
+        "tags": [
+          "hosted"
+        ],
+        "description": "Revoke a hosted-download link and delete its R2 blobs.",
+        "operationId": "hosted_revoke",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostedRevokeResp"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/d/{token}": {
+      "get": {
+        "tags": [
+          "hosted"
+        ],
+        "description": "Public landing-page metadata. Sender identity (cleartext), file list (cleartext filenames + mimes), expiry. The CEK to decrypt the bytes lives in the URL fragment.",
+        "operationId": "hosted_view",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostedPublicView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/d/{token}/file": {
+      "get": {
+        "tags": [
+          "hosted"
+        ],
+        "description": "Stream one file's ciphertext. Supports HTTP Range for resumable browser downloads. Server returns `Content-Type: application/octet-stream` because it doesn't know the real mime.",
+        "operationId": "hosted_download",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "r2_key",
+            "in": "query",
+            "description": "Must be a key listed on this row's `files`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "description": "Optional `bytes=START-END`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full ciphertext.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Partial content (Range).",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "expired or revoked",
             "content": {
               "application/json": {
                 "schema": {
@@ -1377,6 +2290,77 @@
           },
           "403": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/invites/{token}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "description": "Revoke an unredeemed invite. Refuses if the invite has already been redeemed (those are audit trail).",
+        "operationId": "admin_delete_invite",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "invite already redeemed",
             "content": {
               "application/json": {
                 "schema": {
@@ -1563,6 +2547,159 @@
         }
       }
     },
+    "/api/admin/backup": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "description": "Dump every DO (registry + every mailbox) to a JSON bundle at `backups/<iso>.json` in R2. Same code path the scheduled daily backup uses.",
+        "operationId": "admin_backup",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupCreateResp"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/backups": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "description": "List backup bundles in R2 + the cron schedule the scheduled handler runs on.",
+        "operationId": "admin_list_backups",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupListResp"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/restore": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "description": "Replay a backup bundle. Registry rows go first (so user_ids exist when MailboxDO rows reference them). Each table uses INSERT OR REPLACE so re-running is idempotent.",
+        "operationId": "admin_restore",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/config": {
       "get": {
         "tags": [
@@ -1730,27 +2867,50 @@
           }
         }
       },
-      "AttachmentUploadResp": {
+      "AttachmentView": {
         "type": "object",
         "required": [
           "id",
           "r2_key",
+          "mime",
           "size_bytes",
-          "mime"
+          "created_at"
         ],
         "properties": {
           "id": {
             "type": "string"
           },
+          "message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "draft_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "r2_key": {
+            "type": "string"
+          },
+          "filename_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mime": {
             "type": "string"
           },
           "size_bytes": {
             "type": "integer",
             "format": "int64"
           },
-          "mime": {
-            "type": "string"
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -1798,6 +2958,63 @@
           },
           "require_resident_key": {
             "type": "boolean"
+          }
+        }
+      },
+      "BackupCreateResp": {
+        "type": "object",
+        "required": [
+          "key",
+          "size_bytes"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "BackupListItem": {
+        "type": "object",
+        "required": [
+          "key",
+          "size_bytes",
+          "uploaded_at"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "uploaded_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BackupListResp": {
+        "type": "object",
+        "required": [
+          "backups",
+          "schedule_cron"
+        ],
+        "properties": {
+          "backups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupListItem"
+            }
+          },
+          "schedule_cron": {
+            "type": "string"
           }
         }
       },
@@ -1928,6 +3145,19 @@
           "sign_count": {
             "type": "integer",
             "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "DeleteThreadResp": {
+        "type": "object",
+        "required": [
+          "deleted_blobs"
+        ],
+        "properties": {
+          "deleted_blobs": {
+            "type": "integer",
+            "format": "int64",
             "minimum": 0
           }
         }
@@ -2078,6 +3308,256 @@
         "properties": {
           "prf": {
             "$ref": "#/components/schemas/PrfInput"
+          }
+        }
+      },
+      "HostedCreateReq": {
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "properties": {
+          "recipient_addrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Display-only recipients (for the anti-phishing landing)."
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostedFile"
+            }
+          },
+          "ttl_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "TTL override; server clamps to [1, 30] days."
+          },
+          "sender_cek_wrap_b64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CEK sealed to sender's own X25519 pubkey. Lets the sender\nre-decrypt from the /hosted dashboard later. Public viewer\nendpoints never expose this."
+          }
+        }
+      },
+      "HostedCreateResp": {
+        "type": "object",
+        "required": [
+          "token",
+          "url_prefix",
+          "expires_at"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "url_prefix": {
+            "type": "string",
+            "description": "URL prefix WITHOUT the `#k=<key>` fragment — caller appends\nthe fragment client-side so the CEK never reaches the server."
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "HostedFile": {
+        "type": "object",
+        "required": [
+          "r2_key",
+          "size",
+          "plaintext_size",
+          "chunk_size",
+          "chunk_count",
+          "filename",
+          "mime"
+        ],
+        "properties": {
+          "r2_key": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "plaintext_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "chunk_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "chunk_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "mime": {
+            "type": "string"
+          }
+        }
+      },
+      "HostedPublicView": {
+        "type": "object",
+        "required": [
+          "token",
+          "sender_addr",
+          "recipient_addrs",
+          "files",
+          "total_bytes",
+          "created_at",
+          "expires_at",
+          "download_count",
+          "revoked",
+          "expired"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "sender_addr": {
+            "type": "string"
+          },
+          "sender_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipient_addrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostedFile"
+            }
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "download_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "expired": {
+            "type": "boolean"
+          }
+        }
+      },
+      "HostedRevokeResp": {
+        "type": "object",
+        "required": [
+          "deleted_blobs"
+        ],
+        "properties": {
+          "deleted_blobs": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "HostedSenderRow": {
+        "type": "object",
+        "required": [
+          "token",
+          "recipient_addrs",
+          "sender_addr",
+          "files",
+          "total_bytes",
+          "created_at",
+          "expires_at",
+          "download_count",
+          "revoked"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "recipient_addrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sender_addr": {
+            "type": "string"
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostedFile"
+            }
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "download_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "sender_cek_wrap_b64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sender-only — base64url of `seal_to(sender_pub, cek)`. Only\nreturned on /api/hosted/mine, never on the public view."
           }
         }
       },
@@ -2698,6 +4178,34 @@
           }
         }
       },
+      "RestoreReq": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        }
+      },
+      "RestoreResp": {
+        "type": "object",
+        "required": [
+          "ok",
+          "restored_mailboxes"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "restored_mailboxes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "RpInfo": {
         "type": "object",
         "required": [
@@ -2709,6 +4217,413 @@
             "type": "string"
           },
           "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SecretAttachmentRef": {
+        "type": "object",
+        "required": [
+          "r2_key",
+          "mime",
+          "size",
+          "filename_ct_b64"
+        ],
+        "properties": {
+          "r2_key": {
+            "type": "string"
+          },
+          "mime": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total ciphertext bytes on R2."
+          },
+          "filename_ct_b64": {
+            "type": "string",
+            "description": "Single chunk of XChaCha20-Poly1305 framed ciphertext of the\nfilename, under the secret-link CEK."
+          },
+          "plaintext_size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total plaintext bytes."
+          },
+          "chunk_size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Uniform plaintext bytes per chunk (last may be smaller). 0\nmeans \"treat as non-chunked single blob\" — pre-chunked legacy."
+          },
+          "chunk_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SecretAttachmentReq": {
+        "type": "object",
+        "required": [
+          "password_check_b64",
+          "r2_key"
+        ],
+        "properties": {
+          "password_check_b64": {
+            "type": "string"
+          },
+          "r2_key": {
+            "type": "string"
+          },
+          "offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Optional byte range. When both fields are provided the worker\nissues an R2 ranged GET; otherwise serves the whole object.",
+            "minimum": 0
+          },
+          "length": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "SecretCreateReq": {
+        "type": "object",
+        "required": [
+          "policy",
+          "argon_salt_b64",
+          "kdf_params",
+          "password_check_b64",
+          "password_wrap_b64",
+          "subject_ct_b64",
+          "body_ct_b64"
+        ],
+        "properties": {
+          "recipient": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Email recipient (compose flow). Absent for /share standalone links."
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policy": {
+            "type": "string",
+            "description": "One of `\"one_time\" | \"1h\" | \"24h\" | \"14d\" | \"never\"`."
+          },
+          "argon_salt_b64": {
+            "type": "string"
+          },
+          "kdf_params": {
+            "type": "string"
+          },
+          "password_check_b64": {
+            "type": "string"
+          },
+          "password_wrap_b64": {
+            "type": "string"
+          },
+          "subject_ct_b64": {
+            "type": "string"
+          },
+          "body_ct_b64": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecretAttachmentRef"
+            }
+          }
+        }
+      },
+      "SecretCreateResp": {
+        "type": "object",
+        "required": [
+          "token",
+          "url",
+          "expires_at"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SecretLinkOpenReq": {
+        "type": "object",
+        "required": [
+          "password_check_b64"
+        ],
+        "properties": {
+          "password_check_b64": {
+            "type": "string"
+          }
+        }
+      },
+      "SecretLinkOpenResp": {
+        "type": "object",
+        "required": [
+          "password_wrap_b64",
+          "subject_ct_b64",
+          "body_ct_b64",
+          "attachments",
+          "sender_addr",
+          "opens_count",
+          "expires_at",
+          "policy"
+        ],
+        "properties": {
+          "password_wrap_b64": {
+            "type": "string"
+          },
+          "subject_ct_b64": {
+            "type": "string"
+          },
+          "body_ct_b64": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "sender_addr": {
+            "type": "string"
+          },
+          "sender_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipient_addr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_opened_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "opens_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "policy": {
+            "type": "string"
+          }
+        }
+      },
+      "SecretLinkPublicView": {
+        "type": "object",
+        "required": [
+          "token",
+          "sender_addr",
+          "argon_salt_b64",
+          "kdf_params",
+          "policy",
+          "created_at",
+          "expires_at",
+          "opens_count",
+          "revoked",
+          "expired",
+          "self_destructed"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "sender_addr": {
+            "type": "string"
+          },
+          "sender_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipient_addr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "argon_salt_b64": {
+            "type": "string"
+          },
+          "kdf_params": {
+            "type": "string"
+          },
+          "policy": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "first_opened_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "opens_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "expired": {
+            "type": "boolean"
+          },
+          "self_destructed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SecretRevokeResp": {
+        "type": "object",
+        "required": [
+          "deleted_blobs"
+        ],
+        "properties": {
+          "deleted_blobs": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "SecretSenderRow": {
+        "type": "object",
+        "required": [
+          "token",
+          "sender_addr",
+          "policy",
+          "created_at",
+          "expires_at",
+          "opens_count",
+          "fail_count",
+          "revoked",
+          "self_destructed"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "recipient_addr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sender_addr": {
+            "type": "string"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policy": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "first_opened_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "opens_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "fail_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "self_destructed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SendAttachmentRef": {
+        "type": "object",
+        "required": [
+          "r2_key",
+          "filename",
+          "mime"
+        ],
+        "properties": {
+          "r2_key": {
+            "type": "string",
+            "description": "R2 key produced by the unified upload pipeline (`kind=attach`)."
+          },
+          "filename": {
+            "type": "string",
+            "description": "Plain filename for the outbound MIME Content-Disposition. Never\nstored server-side in cleartext — see `filename_ct_b64`."
+          },
+          "filename_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sealed-to-self filename stored on the sender's MailboxDO row."
+          },
+          "mime": {
             "type": "string"
           }
         }
@@ -2773,12 +4688,12 @@
               "null"
             ]
           },
-          "attachment_r2_keys": {
+          "attachments": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/SendAttachmentRef"
             },
-            "description": "Optional R2 keys for attachments (already uploaded via /api/attachments)."
+            "description": "Inline-MIME attachments. The hosted-link path is now driven\nentirely client-side (see /api/hosted/create) — large files\nbecome links spliced into `text`/`html` BEFORE this call."
           }
         }
       },
@@ -2883,6 +4798,174 @@
           }
         }
       },
+      "UploadAbortReq": {
+        "type": "object",
+        "required": [
+          "r2_key",
+          "upload_id"
+        ],
+        "properties": {
+          "r2_key": {
+            "type": "string"
+          },
+          "upload_id": {
+            "type": "string"
+          }
+        }
+      },
+      "UploadCompleteReq": {
+        "type": "object",
+        "required": [
+          "r2_key",
+          "upload_id",
+          "parts",
+          "size"
+        ],
+        "properties": {
+          "r2_key": {
+            "type": "string"
+          },
+          "upload_id": {
+            "type": "string"
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UploadedPartRef"
+            }
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum of part lengths (ciphertext bytes uploaded)."
+          },
+          "filename_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`attach` only — sealed filename to store on MailboxDO."
+          },
+          "mime": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`attach` only — real mime for outbound MIME assembly."
+          },
+          "draft_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`attach` only — bind the new attachment row to a draft so\ndraft-cleanup paths can find it."
+          }
+        }
+      },
+      "UploadCompleteResp": {
+        "type": "object",
+        "required": [
+          "r2_key",
+          "size"
+        ],
+        "properties": {
+          "r2_key": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "attachment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`attach` kind only — id of the row registered in MailboxDO."
+          },
+          "mime": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UploadInitReq": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/UploadKind"
+          },
+          "mime": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional MIME hint stored as R2 http_metadata. Encrypted-kind\nuploads almost always use `application/octet-stream` here\nbecause the bytes are ciphertext."
+          }
+        }
+      },
+      "UploadInitResp": {
+        "type": "object",
+        "required": [
+          "r2_key",
+          "upload_id"
+        ],
+        "properties": {
+          "r2_key": {
+            "type": "string"
+          },
+          "upload_id": {
+            "type": "string"
+          }
+        }
+      },
+      "UploadKind": {
+        "type": "string",
+        "enum": [
+          "attach",
+          "hosted",
+          "secret"
+        ]
+      },
+      "UploadPartResp": {
+        "type": "object",
+        "required": [
+          "part_number",
+          "etag"
+        ],
+        "properties": {
+          "part_number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "etag": {
+            "type": "string"
+          }
+        }
+      },
+      "UploadedPartRef": {
+        "type": "object",
+        "required": [
+          "part_number",
+          "etag"
+        ],
+        "properties": {
+          "part_number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "etag": {
+            "type": "string"
+          }
+        }
+      },
       "UserView": {
         "type": "object",
         "required": [
@@ -2938,7 +5021,7 @@
     },
     {
       "name": "mail",
-      "description": "Threads, messages, and sending."
+      "description": "Threads, messages, send + realtime."
     },
     {
       "name": "drafts",
@@ -2950,11 +5033,23 @@
     },
     {
       "name": "attachments",
-      "description": "R2-backed encrypted attachment storage."
+      "description": "R2-backed encrypted attachment storage. Upload moved to `uploads`."
+    },
+    {
+      "name": "uploads",
+      "description": "Unified chunked R2 multipart upload pipeline. One API for attach / hosted / secret kinds."
+    },
+    {
+      "name": "secret",
+      "description": "Password-protected E2E secret links (ProtonMail-style)."
+    },
+    {
+      "name": "hosted",
+      "description": "End-to-end encrypted hosted downloads (Firefox Send / Wormhole.app model — key in URL fragment)."
     },
     {
       "name": "admin",
-      "description": "Admin-only invites, user listing, and address ownership."
+      "description": "Admin-only invites, user listing, address ownership, backup / restore."
     },
     {
       "name": "misc",

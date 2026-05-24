@@ -70,7 +70,17 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
         ("DELETE", p) if p.starts_with("/api/labels/") => api::labels::delete(req, &env, &cfg).await,
         ("POST", "/api/message-labels") => api::labels::toggle(req, &env, &cfg).await,
 
-        ("POST", "/api/attachments") => api::attachments::upload(req, &env, &cfg).await,
+        // Unified upload pipeline — kind ∈ { attach, hosted, secret }
+        // picks the R2 prefix and post-complete bookkeeping. All file
+        // uploads (regular email, hosted links, secret-link ciphertext)
+        // go through here.
+        ("POST", "/api/uploads/init") => api::uploads::init(req, &env, &cfg).await,
+        ("POST", "/api/uploads/parts") => api::uploads::part(req, &env, &cfg).await,
+        ("POST", "/api/uploads/complete") => api::uploads::complete(req, &env, &cfg).await,
+        ("POST", "/api/uploads/abort") => api::uploads::abort(req, &env, &cfg).await,
+
+        // Attachment read paths (download / list / delete) stay — only
+        // the upload was unified into /api/uploads/*.
         ("GET", p) if p.starts_with("/api/messages/") && p.ends_with("/attachments") => {
             api::attachments::list_for_message(req, &env, &cfg).await
         }
@@ -89,6 +99,44 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
         ("POST", "/api/admin/restore") => api::admin::restore(req, &env, &cfg).await,
 
         ("GET", "/api/config") => api::misc::public_config(&cfg).await,
+
+        // Secret-link (password-protected outside-recipient) flow.
+        // Authenticated, sender-side:
+        ("POST", "/api/secret/create") => api::secret::create(req, &env, &cfg).await,
+        ("GET", "/api/secret/mine") => api::secret::list_mine(req, &env, &cfg).await,
+        ("POST", p) if p.starts_with("/api/secret/") && p.ends_with("/revoke") => {
+            api::secret::revoke(req, &env, &cfg).await
+        }
+        // Unauthenticated, recipient-side:
+        ("GET", p) if p.starts_with("/api/s/")
+            && !p.contains("/open")
+            && !p.contains("/attachment") =>
+        {
+            api::secret::view(req, &env, &cfg).await
+        }
+        ("POST", p) if p.starts_with("/api/s/") && p.ends_with("/open") => {
+            api::secret::open(req, &env, &cfg).await
+        }
+        ("POST", p) if p.starts_with("/api/s/") && p.ends_with("/attachment") => {
+            api::secret::attachment(req, &env, &cfg).await
+        }
+
+        // Hosted downloads — Firefox Send / Wormhole.app model.
+        // Client-driven: the sender's browser generates a CEK, uploads
+        // ciphertext via /api/uploads (kind=hosted), then POSTs the
+        // encrypted metadata here. The CEK never reaches the server;
+        // it lives in the URL fragment of the share link.
+        ("POST", "/api/hosted/create") => api::hosted::create(req, &env, &cfg).await,
+        ("GET", "/api/hosted/mine") => api::hosted::list_mine(req, &env, &cfg).await,
+        ("POST", p) if p.starts_with("/api/hosted/") && p.ends_with("/revoke") => {
+            api::hosted::revoke(req, &env, &cfg).await
+        }
+        ("GET", p) if p.starts_with("/api/d/") && !p.contains("/file") => {
+            api::hosted::view(req, &env, &cfg).await
+        }
+        ("GET", p) if p.starts_with("/api/d/") && p.ends_with("/file") => {
+            api::hosted::download(req, &env, &cfg).await
+        }
 
         _ => Err(error::ApiError::NotFound),
     };

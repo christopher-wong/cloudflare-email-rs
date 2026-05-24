@@ -21,6 +21,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_bytes = "0.11"
 
+# Shared request/response shapes. Same crate the openapi-gen binary
+# consumes — there's exactly one definition of each payload struct
+# across the workspace, so the OpenAPI spec can't drift from the
+# handlers.
+cfemail-api-types = { path = "../api-types" }
+
 # Body reading on the http feature comes through http-body's BodyExt::collect.
 http-body-util = "0.1"
 futures-util = "0.3"

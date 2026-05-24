@@ -17,8 +17,12 @@
  */
 
 const DB_NAME = 'cfemail';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_AUTH = 'auth';
+/** Per-draft transient state — currently just the hosted-attachment
+ *  CEK + uploaded file manifest. Keyed by client-generated draft id.
+ *  Cleared on successful send (or explicit draft delete). */
+const STORE_DRAFT_HOSTED = 'draft_hosted';
 
 export interface CachedWrap {
   /** base64url ciphertext of the wrap (AES-GCM(wrap_key, priv)). */
@@ -46,6 +50,9 @@ function open(): Promise<IDBDatabase> | null {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_AUTH)) {
         db.createObjectStore(STORE_AUTH);
+      }
+      if (!db.objectStoreNames.contains(STORE_DRAFT_HOSTED)) {
+        db.createObjectStore(STORE_DRAFT_HOSTED);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -85,6 +92,68 @@ export async function clearCachedWrap(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_AUTH, 'readwrite');
     tx.objectStore(STORE_AUTH).delete(KEY_WRAP);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ---- per-draft hosted state ----
+//
+// Stored as `{ cek_b64, files }` — the CEK is a 32-byte AES key that
+// we encode as base64url for IDB JSON safety (structured-clone of
+// Uint8Array works too but b64 keeps backups / debugging simpler).
+
+export interface DraftHostedState {
+  cek_b64: string;
+  /** Mirrors `PreparedHostedFile[]` from web/src/lib/hosted.ts plus a
+   *  client-local `id` per row so the Compose UI can identify rows
+   *  for removal. */
+  files: Array<{
+    id: string;
+    filename: string;
+    mime: string;
+    plaintext_size: number;
+    prepared: unknown;
+  }>;
+}
+
+export async function putDraftHosted(
+  draftId: string,
+  state: DraftHostedState,
+): Promise<void> {
+  const dbp = open();
+  if (!dbp) return;
+  const db = await dbp;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_DRAFT_HOSTED, 'readwrite');
+    tx.objectStore(STORE_DRAFT_HOSTED).put(state, draftId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function getDraftHosted(
+  draftId: string,
+): Promise<DraftHostedState | null> {
+  const dbp = open();
+  if (!dbp) return null;
+  const db = await dbp;
+  return new Promise<DraftHostedState | null>((resolve, reject) => {
+    const tx = db.transaction(STORE_DRAFT_HOSTED, 'readonly');
+    const req = tx.objectStore(STORE_DRAFT_HOSTED).get(draftId);
+    req.onsuccess = () =>
+      resolve((req.result as DraftHostedState | undefined) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function deleteDraftHosted(draftId: string): Promise<void> {
+  const dbp = open();
+  if (!dbp) return;
+  const db = await dbp;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_DRAFT_HOSTED, 'readwrite');
+    tx.objectStore(STORE_DRAFT_HOSTED).delete(draftId);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

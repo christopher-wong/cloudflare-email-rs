@@ -11,8 +11,14 @@
 //! recovery still works but UX of "no passkeys at all" is bad; require
 //! adding one first if the user wants to swap.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use worker::*;
+
+use api_types::{
+    AddPasskeyOptions, AddPasskeyVerifyReq as AddVerifyReq,
+    AuthenticatorSelection as AuthSel, ExcludeCred, Extensions as PrfExt,
+    PrfEval, PrfInput, PubKeyCredParam, PubKeyUser as User, RpInfo as Rp,
+};
 
 use crate::b64;
 use crate::config::{rp_id, rp_origin, AppConfig};
@@ -35,41 +41,10 @@ pub async fn list(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<Re
 }
 
 // ---- Add passkey ceremony ------------------------------------------------
-
-#[derive(Serialize)]
-struct AddPasskeyOptions {
-    rp: Rp,
-    user: User,
-    challenge: String,
-    pub_key_cred_params: Vec<PubKeyCredParam>,
-    authenticator_selection: AuthSel,
-    timeout: u32,
-    attestation: String,
-    extensions: PrfExt,
-    challenge_id: String,
-    prf_salt_b64: String,
-    exclude_credentials: Vec<ExcludeCred>,
-}
-#[derive(Serialize)]
-struct Rp { id: String, name: String }
-#[derive(Serialize)]
-struct User { id: String, name: String, display_name: String }
-#[derive(Serialize)]
-struct PubKeyCredParam { #[serde(rename = "type")] ty: String, alg: i32 }
-#[derive(Serialize)]
-struct AuthSel {
-    user_verification: String,
-    resident_key: String,
-    require_resident_key: bool,
-}
-#[derive(Serialize)]
-struct PrfExt { prf: PrfInput }
-#[derive(Serialize)]
-struct PrfInput { eval: PrfEval }
-#[derive(Serialize)]
-struct PrfEval { first: String }
-#[derive(Serialize)]
-struct ExcludeCred { #[serde(rename = "type")] ty: String, id: String }
+//
+// All ceremony types live in api-types (and are shared with the
+// registration flow in auth.rs). Local aliases keep call-site names
+// readable.
 
 pub async fn add_options(req: HttpRequest, env: &Env, cfg: &AppConfig) -> ApiResult<Response> {
     let s = require_auth(&req, env).await?;
@@ -130,24 +105,6 @@ pub async fn add_options(req: HttpRequest, env: &Env, cfg: &AppConfig) -> ApiRes
             .map(|c| ExcludeCred { ty: "public-key".into(), id: c.credential_id_b64 })
             .collect(),
     })
-}
-
-#[derive(Deserialize)]
-struct AddVerifyReq {
-    challenge_id: String,
-    cred_label: Option<String>,
-    attestation: AttResp,
-    /// AES-GCM-wrapped X25519 private key under the new PRF-derived key.
-    wrapped_blob_b64: String,
-    wrap_salt_b64: String,
-}
-
-#[derive(Deserialize)]
-struct AttResp {
-    credential_id_b64: String,
-    client_data_json_b64: String,
-    attestation_object_b64: String,
-    transports: Option<Vec<String>>,
 }
 
 pub async fn add_verify(

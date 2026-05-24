@@ -48,9 +48,11 @@ use schemas as s;
         // Mail
         p::list_threads,
         p::get_thread,
+        p::delete_thread,
         p::patch_message,
         p::delete_message,
         p::send_message,
+        p::realtime,
 
         // Drafts
         p::drafts_upsert,
@@ -64,18 +66,43 @@ use schemas as s;
         p::labels_delete,
         p::message_labels_toggle,
 
-        // Attachments
-        p::attachments_upload,
+        // Attachments (read/cleanup only — upload moved to /api/uploads/*)
+        p::attachments_list_for_message,
         p::attachments_download,
         p::attachments_delete,
+
+        // Unified upload pipeline (all kinds: attach / hosted / secret)
+        p::uploads_init,
+        p::uploads_parts,
+        p::uploads_complete,
+        p::uploads_abort,
+
+        // Secret links (password-protected E2E)
+        p::secret_create,
+        p::secret_mine,
+        p::secret_revoke,
+        p::secret_view,
+        p::secret_open,
+        p::secret_attachment,
+
+        // Hosted downloads (E2E, fragment-key)
+        p::hosted_create,
+        p::hosted_mine,
+        p::hosted_revoke,
+        p::hosted_view,
+        p::hosted_download,
 
         // Admin
         p::admin_create_invite,
         p::admin_list_invites,
+        p::admin_delete_invite,
         p::admin_list_users,
         p::admin_add_address,
         p::admin_remove_address,
         p::admin_status,
+        p::admin_backup,
+        p::admin_list_backups,
+        p::admin_restore,
 
         // Misc
         p::public_config,
@@ -121,7 +148,46 @@ use schemas as s;
         s::ToggleMessageLabelReq,
         s::DraftUpsertReq,
         s::DraftView,
-        s::AttachmentUploadResp,
+        s::AttachmentView,
+        s::SendAttachmentRef,
+
+        // Unified upload pipeline
+        s::UploadKind,
+        s::UploadInitReq,
+        s::UploadInitResp,
+        s::UploadPartResp,
+        s::UploadedPartRef,
+        s::UploadCompleteReq,
+        s::UploadCompleteResp,
+        s::UploadAbortReq,
+
+        // Secret links
+        s::SecretAttachmentRef,
+        s::SecretCreateReq,
+        s::SecretCreateResp,
+        s::SecretSenderRow,
+        s::SecretRevokeResp,
+        s::SecretLinkPublicView,
+        s::SecretLinkOpenReq,
+        s::SecretLinkOpenResp,
+        s::SecretAttachmentReq,
+
+        // Hosted downloads
+        s::HostedFile,
+        s::HostedCreateReq,
+        s::HostedCreateResp,
+        s::HostedSenderRow,
+        s::HostedPublicView,
+        s::HostedRevokeResp,
+
+        // Misc / mail / admin extras
+        s::DeleteThreadResp,
+        s::BackupCreateResp,
+        s::BackupListItem,
+        s::BackupListResp,
+        s::RestoreReq,
+        s::RestoreResp,
+
         s::CreateInviteReq,
         s::CreateInviteResp,
         s::InviteView,
@@ -133,11 +199,14 @@ use schemas as s;
         (name = "auth", description = "Bootstrap + WebAuthn ceremonies + session lifecycle."),
         (name = "me", description = "Authenticated user's profile and owned addresses."),
         (name = "passkeys", description = "Per-user passkey credential management."),
-        (name = "mail", description = "Threads, messages, and sending."),
+        (name = "mail", description = "Threads, messages, send + realtime."),
         (name = "drafts", description = "Encrypted draft persistence."),
         (name = "labels", description = "User-defined labels and message-label edges."),
-        (name = "attachments", description = "R2-backed encrypted attachment storage."),
-        (name = "admin", description = "Admin-only invites, user listing, and address ownership."),
+        (name = "attachments", description = "R2-backed encrypted attachment storage. Upload moved to `uploads`."),
+        (name = "uploads", description = "Unified chunked R2 multipart upload pipeline. One API for attach / hosted / secret kinds."),
+        (name = "secret", description = "Password-protected E2E secret links (ProtonMail-style)."),
+        (name = "hosted", description = "End-to-end encrypted hosted downloads (Firefox Send / Wormhole.app model — key in URL fragment)."),
+        (name = "admin", description = "Admin-only invites, user listing, address ownership, backup / restore."),
         (name = "misc", description = "Public, unauthenticated config."),
     ),
 )]

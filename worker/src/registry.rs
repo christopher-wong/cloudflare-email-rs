@@ -57,6 +57,21 @@ impl DurableObject for RegistryDO {
             (Method::Delete, "/credentials") => self.delete_credential(req).await,
             (Method::Get, "/export") => self.export(req).await,
             (Method::Post, "/import") => self.import(req).await,
+            (Method::Post, "/secret-links") => self.create_secret_link(req).await,
+            (Method::Get, "/secret-links/by-token") => self.secret_link_by_token(req).await,
+            (Method::Get, "/secret-links/by-user") => self.secret_links_by_user(req).await,
+            (Method::Post, "/secret-links/open") => self.open_secret_link(req).await,
+            (Method::Post, "/secret-links/verify") => self.verify_secret_link(req).await,
+            (Method::Post, "/secret-links/revoke") => self.revoke_secret_link(req).await,
+            (Method::Post, "/secret-links/purge") => self.purge_secret_links(req).await,
+            (Method::Get, "/secret-links/referenced-keys") => self.secret_links_referenced_keys().await,
+            (Method::Post, "/hosted-downloads") => self.create_hosted_download(req).await,
+            (Method::Get, "/hosted-downloads/by-token") => self.hosted_download_by_token(req).await,
+            (Method::Get, "/hosted-downloads/by-user") => self.hosted_downloads_by_user(req).await,
+            (Method::Post, "/hosted-downloads/bump") => self.bump_hosted_download(req).await,
+            (Method::Post, "/hosted-downloads/revoke") => self.revoke_hosted_download(req).await,
+            (Method::Post, "/hosted-downloads/purge") => self.purge_hosted_downloads(req).await,
+            (Method::Get, "/hosted-downloads/referenced-keys") => self.hosted_downloads_referenced_keys().await,
             _ => Response::error("not found", 404),
         }
     }
@@ -71,6 +86,14 @@ impl RegistryDO {
         let sql = self.sql();
         for stmt in SCHEMA {
             sql.exec(stmt, None)?;
+        }
+        // Best-effort migrations. ALTER TABLE ADD COLUMN errors with
+        // "duplicate column" on subsequent runs — swallow it so the
+        // migration is idempotent. Any *first*-run failure (real
+        // problem) will surface on the next SELECT against the new
+        // column.
+        for stmt in MIGRATIONS {
+            let _ = sql.exec(stmt, None);
         }
         Ok(())
     }
@@ -969,6 +992,627 @@ impl RegistryDO {
         Response::ok("{}")
     }
 
+    // ---- secret links -----------------------------------------------------
+
+    async fn create_secret_link(&self, mut req: Request) -> Result<Response> {
+        let body: CreateSecretLinkReq = req.json().await?;
+        let token = crate::ids::secret_link();
+        let now = now_ms();
+        // Hard upper bound on every link (even "never"): 1y after creation.
+        // Keeps abandoned data from accumulating indefinitely.
+        let expires_at = now + 365 * 86_400_000;
+
+        let password_check = crate::b64::url_decode(&body.password_check_b64)
+            .map_err(|_| Error::RustError("password_check b64".into()))?;
+        let password_wrap = crate::b64::url_decode(&body.password_wrap_b64)
+            .map_err(|_| Error::RustError("password_wrap b64".into()))?;
+        let argon_salt = crate::b64::url_decode(&body.argon_salt_b64)
+            .map_err(|_| Error::RustError("argon_salt b64".into()))?;
+        let subject_ct = crate::b64::url_decode(&body.subject_ct_b64)
+            .map_err(|_| Error::RustError("subject_ct b64".into()))?;
+        let body_ct = crate::b64::url_decode(&body.body_ct_b64)
+            .map_err(|_| Error::RustError("body_ct b64".into()))?;
+        let attachments_json = serde_json::to_string(&body.attachments)
+            .unwrap_or_else(|_| "[]".to_string());
+
+        self.sql().exec(
+            "INSERT INTO secret_links (
+                token, sender_user_id, sender_addr, sender_name, recipient_addr,
+                password_check, password_wrap, argon_salt, kdf_params,
+                subject_ct, body_ct, hint, attachments, policy,
+                created_at, expires_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            Some(vec![
+                token.clone().into(),
+                body.sender_user_id.into(),
+                body.sender_addr.into(),
+                body.sender_name.into(),
+                body.recipient_addr.into(),
+                password_check.into(),
+                password_wrap.into(),
+                argon_salt.into(),
+                body.kdf_params.into(),
+                subject_ct.into(),
+                body_ct.into(),
+                body.hint.into(),
+                attachments_json.into(),
+                body.policy.into(),
+                now.into(),
+                expires_at.into(),
+            ]),
+        )?;
+        Response::from_json(&serde_json::json!({
+            "token": token,
+            "expires_at": expires_at,
+        }))
+    }
+
+    /// Public metadata for a viewer — does NOT include the wrap or
+    /// ciphertext. Anyone with the token can hit this; we leak only the
+    /// sender display name, recipient address (so the viewer page can show
+    /// who it was sent to), the hint, and salt/kdf-params so the client
+    /// can pre-derive the Argon2id key for the password prompt.
+    async fn secret_link_by_token(&self, req: Request) -> Result<Response> {
+        let url = req.url()?;
+        let token = url
+            .query_pairs()
+            .find(|(k, _)| k == "token")
+            .map(|(_, v)| v.to_string())
+            .ok_or_else(|| Error::RustError("token required".into()))?;
+        let row = self.load_secret_link(&token)?;
+        let now = now_ms();
+        let expired = row.expires_at < now;
+        Response::from_json(&serde_json::json!({
+            "token": row.token,
+            "sender_addr": row.sender_addr,
+            "sender_name": row.sender_name,
+            "recipient_addr": row.recipient_addr,
+            "hint": row.hint,
+            "argon_salt_b64": crate::b64::url_encode(&row.argon_salt),
+            "kdf_params": row.kdf_params,
+            "policy": row.policy,
+            "created_at": row.created_at,
+            "expires_at": row.expires_at,
+            "first_opened_at": row.first_opened_at,
+            "opens_count": row.opens_count,
+            "revoked": row.revoked != 0,
+            "expired": expired,
+            "self_destructed": row.self_destructed != 0,
+        }))
+    }
+
+    /// Two-step password verification. Client derives Argon2id locally,
+    /// HKDFs out a `check` value, and sends it here. We compare against the
+    /// stored check (constant-time). On match: return the wrap + ciphertext,
+    /// bump opens_count, set first_opened_at, and apply the policy (shorten
+    /// expires_at or revoke for one-time use).
+    async fn open_secret_link(&self, mut req: Request) -> Result<Response> {
+        let body: OpenSecretLinkReq = req.json().await?;
+        let row = self.load_secret_link(&body.token)?;
+        let now = now_ms();
+        if row.self_destructed != 0 {
+            return self.self_destruct_response(&row);
+        }
+        if row.revoked != 0 {
+            return Response::error("revoked", 410);
+        }
+        if row.expires_at < now {
+            return Response::error("expired", 410);
+        }
+        let given_check = crate::b64::url_decode(&body.password_check_b64)
+            .map_err(|_| Error::RustError("password_check b64".into()))?;
+        if !crate::crypto::ct_eq(&given_check, &row.password_check) {
+            return self.handle_bad_password(&row, &body.token);
+        }
+
+        // Success — figure out the new policy-driven expires_at *before*
+        // writing. Note: for `one_time`, policy_expiry returns
+        // `now + ONE_TIME_GRACE_MS`, giving the viewer a short window to
+        // pull attachment streams that follow this body fetch. The
+        // grace window IS the consumption mechanism — once it passes,
+        // verify/open both fail.
+        let first_opened = row.first_opened_at.unwrap_or(now);
+        let new_expires_at = if row.first_opened_at.is_some() {
+            row.expires_at
+        } else {
+            policy_expiry(&row.policy, first_opened, row.expires_at)
+        };
+
+        self.sql().exec(
+            "UPDATE secret_links SET
+                opens_count = opens_count + 1,
+                first_opened_at = COALESCE(first_opened_at, ?),
+                expires_at = ?
+             WHERE token = ?",
+            Some(vec![
+                now.into(),
+                new_expires_at.into(),
+                body.token.into(),
+            ]),
+        )?;
+
+        Response::from_json(&serde_json::json!({
+            "password_wrap_b64": crate::b64::url_encode(&row.password_wrap),
+            "subject_ct_b64": crate::b64::url_encode(&row.subject_ct),
+            "body_ct_b64": crate::b64::url_encode(&row.body_ct),
+            "attachments": serde_json::from_str::<serde_json::Value>(&row.attachments).unwrap_or(serde_json::json!([])),
+            "sender_addr": row.sender_addr,
+            "sender_name": row.sender_name,
+            "recipient_addr": row.recipient_addr,
+            "first_opened_at": Some(first_opened),
+            "opens_count": row.opens_count + 1,
+            "expires_at": new_expires_at,
+            "policy": row.policy,
+        }))
+    }
+
+    /// Read-only password verification — used by the per-attachment
+    /// streaming endpoint. Bumps `fail_count` (and self-destructs after
+    /// 10) on a bad password the same way /open does, but does NOT
+    /// advance `opens_count` or set `first_opened_at`. Refuses to
+    /// verify a link that hasn't been opened yet: callers must hit
+    /// /open first.
+    async fn verify_secret_link(&self, mut req: Request) -> Result<Response> {
+        let body: OpenSecretLinkReq = req.json().await?;
+        let row = self.load_secret_link(&body.token)?;
+        let now = now_ms();
+        if row.self_destructed != 0 {
+            return self.self_destruct_response(&row);
+        }
+        if row.revoked != 0 {
+            return Response::error("revoked", 410);
+        }
+        if row.expires_at < now {
+            return Response::error("expired", 410);
+        }
+        if row.first_opened_at.is_none() {
+            return Response::error("not yet opened", 409);
+        }
+        let given_check = crate::b64::url_decode(&body.password_check_b64)
+            .map_err(|_| Error::RustError("password_check b64".into()))?;
+        if !crate::crypto::ct_eq(&given_check, &row.password_check) {
+            return self.handle_bad_password(&row, &body.token);
+        }
+        Response::from_json(&serde_json::json!({
+            "attachments": serde_json::from_str::<serde_json::Value>(&row.attachments)
+                .unwrap_or(serde_json::json!([])),
+        }))
+    }
+
+    /// Single shared implementation of "bad password" for /open and
+    /// /verify. On the 10th failure the row gets self-destructed:
+    /// ciphertext columns zeroed, attachments JSON cleared, and the
+    /// matching R2 keys returned in the 401 body so the worker layer
+    /// can delete them in lockstep. After self-destruct the response
+    /// status is 410 (Gone) to disambiguate from a normal "wrong
+    /// password" 401.
+    fn handle_bad_password(&self, row: &SecretLinkRow, token: &str) -> Result<Response> {
+        let new_fail = row.fail_count + 1;
+        if new_fail >= 10 {
+            // Self-destruct. Zero the ciphertext + attachments JSON so a
+            // leaked DB row reveals nothing. We don't drop the row —
+            // we want the sender to keep seeing it (with "self
+            // destructed" status) in /api/secret/mine.
+            let r2_keys = attachment_r2_keys(&row.attachments);
+            self.sql().exec(
+                "UPDATE secret_links SET
+                    fail_count = ?,
+                    self_destructed = 1,
+                    subject_ct = X'',
+                    body_ct = X'',
+                    attachments = '[]'
+                 WHERE token = ?",
+                Some(vec![new_fail.into(), token.into()]),
+            )?;
+            let body = serde_json::json!({
+                "error": "self_destructed",
+                "self_destructed": true,
+                "fail_count": new_fail,
+                "r2_keys": r2_keys,
+            });
+            return Ok(Response::from_json(&body)?.with_status(410));
+        }
+        self.sql().exec(
+            "UPDATE secret_links SET fail_count = ? WHERE token = ?",
+            Some(vec![new_fail.into(), token.into()]),
+        )?;
+        let body = serde_json::json!({
+            "error": "bad password",
+            "fail_count": new_fail,
+            "attempts_remaining": 10 - new_fail,
+        });
+        Ok(Response::from_json(&body)?.with_status(401))
+    }
+
+    /// Response shape for any post-destruct probe (open/verify/by-token).
+    /// Always 410 Gone. Includes the (now empty) r2_keys list for symmetry
+    /// with the destruct moment.
+    fn self_destruct_response(&self, _row: &SecretLinkRow) -> Result<Response> {
+        let body = serde_json::json!({
+            "error": "self_destructed",
+            "self_destructed": true,
+        });
+        Ok(Response::from_json(&body)?.with_status(410))
+    }
+
+    async fn revoke_secret_link(&self, mut req: Request) -> Result<Response> {
+        let body: RevokeSecretLinkReq = req.json().await?;
+        let row = self.load_secret_link(&body.token)?;
+        if row.sender_user_id != body.sender_user_id {
+            return Response::error("forbidden", 403);
+        }
+        self.sql().exec(
+            "UPDATE secret_links SET revoked = 1 WHERE token = ?",
+            Some(vec![body.token.into()]),
+        )?;
+        // Return r2_keys so the caller can delete the corresponding blobs.
+        Response::from_json(&serde_json::json!({
+            "r2_keys": attachment_r2_keys(&row.attachments),
+        }))
+    }
+
+    async fn secret_links_by_user(&self, req: Request) -> Result<Response> {
+        let url = req.url()?;
+        let uid = url
+            .query_pairs()
+            .find(|(k, _)| k == "user_id")
+            .map(|(_, v)| v.to_string())
+            .ok_or_else(|| Error::RustError("user_id required".into()))?;
+        #[derive(Deserialize)]
+        struct Row {
+            token: String,
+            recipient_addr: Option<String>,
+            sender_addr: String,
+            hint: Option<String>,
+            policy: String,
+            created_at: i64,
+            expires_at: i64,
+            first_opened_at: Option<i64>,
+            opens_count: i64,
+            fail_count: i64,
+            revoked: i64,
+            #[serde(default)]
+            self_destructed: i64,
+        }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec(
+                "SELECT token, recipient_addr, sender_addr, hint, policy,
+                        created_at, expires_at, first_opened_at,
+                        opens_count, fail_count, revoked, self_destructed
+                 FROM secret_links WHERE sender_user_id = ?
+                 ORDER BY created_at DESC",
+                Some(vec![uid.into()]),
+            )?
+            .to_array()?;
+        let out: Vec<_> = rows
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "token": r.token,
+                    "recipient_addr": r.recipient_addr,
+                    "sender_addr": r.sender_addr,
+                    "hint": r.hint,
+                    "policy": r.policy,
+                    "created_at": r.created_at,
+                    "expires_at": r.expires_at,
+                    "first_opened_at": r.first_opened_at,
+                    "opens_count": r.opens_count,
+                    "fail_count": r.fail_count,
+                    "revoked": r.revoked != 0,
+                    "self_destructed": r.self_destructed != 0,
+                })
+            })
+            .collect();
+        Response::from_json(&out)
+    }
+
+    /// Returns rows whose `expires_at < now` OR `revoked = 1` and have
+    /// at least one attachment we need to clean from R2. The worker then
+    /// deletes the R2 blobs and DELETEs the rows in a follow-up call.
+    async fn purge_secret_links(&self, _req: Request) -> Result<Response> {
+        let now = now_ms();
+        #[derive(Deserialize)]
+        struct Row { token: String, attachments: String }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec(
+                "SELECT token, attachments FROM secret_links
+                 WHERE expires_at < ? OR revoked = 1
+                 LIMIT 500",
+                Some(vec![now.into()]),
+            )?
+            .to_array()?;
+        let mut tokens = Vec::with_capacity(rows.len());
+        let mut keys: Vec<String> = Vec::new();
+        for r in rows {
+            tokens.push(r.token.clone());
+            keys.extend(attachment_r2_keys(&r.attachments));
+        }
+        // Delete the rows now (we already collected the r2_keys).
+        if !tokens.is_empty() {
+            let placeholders = std::iter::repeat("?")
+                .take(tokens.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql_text = format!(
+                "DELETE FROM secret_links WHERE token IN ({placeholders})"
+            );
+            let params: Vec<SqlStorageValue> =
+                tokens.iter().map(|t| t.clone().into()).collect();
+            self.sql().exec(&sql_text, Some(params))?;
+        }
+        Response::from_json(&serde_json::json!({
+            "purged_rows": tokens.len(),
+            "r2_keys": keys,
+        }))
+    }
+
+    /// Returns every R2 key referenced by any current secret_links
+    /// row. The orphan sweep uses it to figure out which `secret/...`
+    /// R2 objects are stranded (uploaded but never wired into a
+    /// `secret_links` row — typically because the user aborted compose
+    /// mid-flight).
+    async fn secret_links_referenced_keys(&self) -> Result<Response> {
+        #[derive(Deserialize)]
+        struct Row { attachments: String }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec("SELECT attachments FROM secret_links", None)?
+            .to_array()?;
+        let mut keys = Vec::new();
+        for r in rows {
+            keys.extend(attachment_r2_keys(&r.attachments));
+        }
+        Response::from_json(&keys)
+    }
+
+    fn load_secret_link(&self, token: &str) -> Result<SecretLinkRow> {
+        let rows: Vec<SecretLinkRow> = self
+            .sql()
+            .exec(
+                "SELECT token, sender_user_id, sender_addr, sender_name, recipient_addr,
+                        password_check, password_wrap, argon_salt, kdf_params,
+                        subject_ct, body_ct, hint, attachments, policy,
+                        created_at, expires_at, first_opened_at,
+                        opens_count, fail_count, revoked, self_destructed
+                 FROM secret_links WHERE token = ?",
+                Some(vec![token.into()]),
+            )?
+            .to_array()?;
+        rows.into_iter()
+            .next()
+            .ok_or_else(|| Error::RustError("secret link not found".into()))
+    }
+
+    // ---- hosted downloads -------------------------------------------------
+
+    async fn create_hosted_download(&self, mut req: Request) -> Result<Response> {
+        let body: CreateHostedReq = req.json().await?;
+        let token = crate::ids::hosted_link();
+        let now = now_ms();
+        let expires_at = now + body.ttl_days.max(1) * 86_400_000;
+        let recipients_json =
+            serde_json::to_string(&body.recipient_addrs).unwrap_or_else(|_| "[]".into());
+        let files_json = serde_json::to_string(&body.files).unwrap_or_else(|_| "[]".into());
+        let sender_cek_wrap: Option<Vec<u8>> = match body.sender_cek_wrap_b64.as_deref() {
+            Some(s) => Some(
+                crate::b64::url_decode(s)
+                    .map_err(|_| Error::RustError("sender_cek_wrap_b64".into()))?,
+            ),
+            None => None,
+        };
+
+        self.sql().exec(
+            "INSERT INTO hosted_downloads (
+                token, sender_user_id, sender_addr, sender_name,
+                recipient_addrs, subject, files, total_bytes,
+                created_at, expires_at, sender_cek_wrap
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            Some(vec![
+                token.clone().into(),
+                body.sender_user_id.into(),
+                body.sender_addr.into(),
+                body.sender_name.into(),
+                recipients_json.into(),
+                body.subject.into(),
+                files_json.into(),
+                body.total_bytes.into(),
+                now.into(),
+                expires_at.into(),
+                sender_cek_wrap.into(),
+            ]),
+        )?;
+        Response::from_json(&serde_json::json!({
+            "token": token,
+            "expires_at": expires_at,
+        }))
+    }
+
+    async fn hosted_download_by_token(&self, req: Request) -> Result<Response> {
+        let url = req.url()?;
+        let token = url
+            .query_pairs()
+            .find(|(k, _)| k == "token")
+            .map(|(_, v)| v.to_string())
+            .ok_or_else(|| Error::RustError("token required".into()))?;
+        let row = self.load_hosted_download(&token)?;
+        let now = now_ms();
+        let expired = row.expires_at < now;
+        Response::from_json(&serde_json::json!({
+            "token": row.token,
+            "sender_addr": row.sender_addr,
+            "sender_name": row.sender_name,
+            "recipient_addrs": serde_json::from_str::<serde_json::Value>(&row.recipient_addrs)
+                .unwrap_or(serde_json::json!([])),
+            "subject": row.subject,
+            "files": serde_json::from_str::<serde_json::Value>(&row.files)
+                .unwrap_or(serde_json::json!([])),
+            "total_bytes": row.total_bytes,
+            "created_at": row.created_at,
+            "expires_at": row.expires_at,
+            "download_count": row.download_count,
+            "revoked": row.revoked != 0,
+            "expired": expired,
+        }))
+    }
+
+    async fn hosted_downloads_by_user(&self, req: Request) -> Result<Response> {
+        let url = req.url()?;
+        let uid = url
+            .query_pairs()
+            .find(|(k, _)| k == "user_id")
+            .map(|(_, v)| v.to_string())
+            .ok_or_else(|| Error::RustError("user_id required".into()))?;
+        #[derive(Deserialize)]
+        struct Row {
+            token: String,
+            recipient_addrs: String,
+            subject: Option<String>,
+            files: String,
+            total_bytes: i64,
+            created_at: i64,
+            expires_at: i64,
+            download_count: i64,
+            revoked: i64,
+            #[serde(with = "serde_bytes", default)]
+            sender_cek_wrap: Option<Vec<u8>>,
+        }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec(
+                "SELECT token, recipient_addrs, subject, files, total_bytes,
+                        created_at, expires_at, download_count, revoked,
+                        sender_cek_wrap
+                 FROM hosted_downloads WHERE sender_user_id = ?
+                 ORDER BY created_at DESC",
+                Some(vec![uid.into()]),
+            )?
+            .to_array()?;
+        let out: Vec<_> = rows
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "token": r.token,
+                    "recipient_addrs": serde_json::from_str::<serde_json::Value>(&r.recipient_addrs)
+                        .unwrap_or(serde_json::json!([])),
+                    "subject": r.subject,
+                    "files": serde_json::from_str::<serde_json::Value>(&r.files)
+                        .unwrap_or(serde_json::json!([])),
+                    "total_bytes": r.total_bytes,
+                    "created_at": r.created_at,
+                    "expires_at": r.expires_at,
+                    "download_count": r.download_count,
+                    "revoked": r.revoked != 0,
+                    // Only returned on this auth'd by-user endpoint —
+                    // /by-token (public viewer) doesn't expose it.
+                    "sender_cek_wrap_b64": r.sender_cek_wrap.as_deref().map(crate::b64::url_encode),
+                })
+            })
+            .collect();
+        Response::from_json(&out)
+    }
+
+    async fn bump_hosted_download(&self, mut req: Request) -> Result<Response> {
+        #[derive(Deserialize)]
+        struct Req { token: String }
+        let body: Req = req.json().await?;
+        self.sql().exec(
+            "UPDATE hosted_downloads SET download_count = download_count + 1
+             WHERE token = ?",
+            Some(vec![body.token.into()]),
+        )?;
+        Response::ok("{}")
+    }
+
+    async fn revoke_hosted_download(&self, mut req: Request) -> Result<Response> {
+        #[derive(Deserialize)]
+        struct Req { token: String, sender_user_id: String }
+        let body: Req = req.json().await?;
+        let row = self.load_hosted_download(&body.token)?;
+        if row.sender_user_id != body.sender_user_id {
+            return Response::error("forbidden", 403);
+        }
+        self.sql().exec(
+            "UPDATE hosted_downloads SET revoked = 1 WHERE token = ?",
+            Some(vec![body.token.into()]),
+        )?;
+        Response::from_json(&serde_json::json!({
+            "r2_keys": hosted_file_r2_keys(&row.files),
+        }))
+    }
+
+    /// Sweep expired/revoked rows. Returns r2_keys to delete + tokens
+    /// that were dropped, in the same shape as `purge_secret_links`.
+    async fn purge_hosted_downloads(&self, _req: Request) -> Result<Response> {
+        let now = now_ms();
+        #[derive(Deserialize)]
+        struct Row { token: String, files: String }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec(
+                "SELECT token, files FROM hosted_downloads
+                 WHERE expires_at < ? OR revoked = 1
+                 LIMIT 500",
+                Some(vec![now.into()]),
+            )?
+            .to_array()?;
+        let mut tokens = Vec::with_capacity(rows.len());
+        let mut keys: Vec<String> = Vec::new();
+        for r in rows {
+            tokens.push(r.token.clone());
+            keys.extend(hosted_file_r2_keys(&r.files));
+        }
+        if !tokens.is_empty() {
+            let placeholders = std::iter::repeat("?")
+                .take(tokens.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql_text = format!(
+                "DELETE FROM hosted_downloads WHERE token IN ({placeholders})"
+            );
+            let params: Vec<SqlStorageValue> =
+                tokens.iter().map(|t| t.clone().into()).collect();
+            self.sql().exec(&sql_text, Some(params))?;
+        }
+        Response::from_json(&serde_json::json!({
+            "purged_rows": tokens.len(),
+            "r2_keys": keys,
+        }))
+    }
+
+    /// Companion to `secret_links_referenced_keys` for hosted
+    /// downloads. Same purpose, different prefix in R2.
+    async fn hosted_downloads_referenced_keys(&self) -> Result<Response> {
+        #[derive(Deserialize)]
+        struct Row { files: String }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec("SELECT files FROM hosted_downloads", None)?
+            .to_array()?;
+        let mut keys = Vec::new();
+        for r in rows {
+            keys.extend(hosted_file_r2_keys(&r.files));
+        }
+        Response::from_json(&keys)
+    }
+
+    fn load_hosted_download(&self, token: &str) -> Result<HostedDownloadRow> {
+        let rows: Vec<HostedDownloadRow> = self
+            .sql()
+            .exec(
+                "SELECT token, sender_user_id, sender_addr, sender_name,
+                        recipient_addrs, subject, files, total_bytes,
+                        created_at, expires_at, download_count, revoked
+                 FROM hosted_downloads WHERE token = ?",
+                Some(vec![token.into()]),
+            )?
+            .to_array()?;
+        rows.into_iter()
+            .next()
+            .ok_or_else(|| Error::RustError("hosted download not found".into()))
+    }
+
     // ---- backup / restore -------------------------------------------------
     //
     // Export every row in every table as JSON. The worker side gzips and
@@ -997,14 +1641,31 @@ impl RegistryDO {
         let sessions     = step!("sessions",    dump_table(&sql, "SELECT * FROM sessions"));
         let key_wraps    = step!("key_wraps",   dump_blob_table(&sql, "SELECT id, user_id, kind, credential_id, wrapped_blob, wrap_salt, kdf_params, label, created_at FROM key_wraps", &["credential_id", "wrapped_blob", "wrap_salt"]));
         let challenges   = step!("challenges",  dump_blob_table(&sql, "SELECT id, value, purpose, user_id, created_at, expires_at FROM challenges", &["value"]));
+        let secret_links = step!("secret_links", dump_blob_table(&sql,
+            "SELECT token, sender_user_id, sender_addr, sender_name, recipient_addr,
+                    password_check, password_wrap, argon_salt, kdf_params,
+                    subject_ct, body_ct, hint, attachments, policy,
+                    created_at, expires_at, first_opened_at,
+                    opens_count, fail_count, revoked, self_destructed
+             FROM secret_links",
+            &["password_check", "password_wrap", "argon_salt", "subject_ct", "body_ct"]));
+        let hosted_downloads = step!("hosted_downloads", dump_blob_table(&sql,
+            "SELECT token, sender_user_id, sender_addr, sender_name,
+                    recipient_addrs, subject, files, total_bytes,
+                    created_at, expires_at, download_count, revoked,
+                    sender_cek_wrap
+             FROM hosted_downloads",
+            &["sender_cek_wrap"]));
         let dump = serde_json::json!({
-            "users":        users,
-            "credentials":  credentials,
-            "addresses":    addresses,
-            "invites":      invites,
-            "sessions":     sessions,
-            "key_wraps":    key_wraps,
-            "challenges":   challenges,
+            "users":            users,
+            "credentials":      credentials,
+            "addresses":        addresses,
+            "invites":          invites,
+            "sessions":         sessions,
+            "key_wraps":        key_wraps,
+            "challenges":       challenges,
+            "secret_links":     secret_links,
+            "hosted_downloads": hosted_downloads,
         });
         Response::from_json(&dump)
     }
@@ -1036,6 +1697,19 @@ impl RegistryDO {
         load_table(&sql, &body, "challenges",
             &["id", "value", "purpose", "user_id", "created_at", "expires_at"],
             &["value"])?;
+        load_table(&sql, &body, "secret_links",
+            &["token", "sender_user_id", "sender_addr", "sender_name", "recipient_addr",
+              "password_check", "password_wrap", "argon_salt", "kdf_params",
+              "subject_ct", "body_ct", "hint", "attachments", "policy",
+              "created_at", "expires_at", "first_opened_at",
+              "opens_count", "fail_count", "revoked", "self_destructed"],
+            &["password_check", "password_wrap", "argon_salt", "subject_ct", "body_ct"])?;
+        load_table(&sql, &body, "hosted_downloads",
+            &["token", "sender_user_id", "sender_addr", "sender_name",
+              "recipient_addrs", "subject", "files", "total_bytes",
+              "created_at", "expires_at", "download_count", "revoked",
+              "sender_cek_wrap"],
+            &["sender_cek_wrap"])?;
         Response::ok("{}")
     }
 }
@@ -1148,36 +1822,11 @@ struct CompleteRegistrationResp {
     addresses: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct UserView {
-    pub id: String,
-    pub handle: String,
-    pub display_name: Option<String>,
-    pub is_admin: bool,
-    pub addresses: Vec<String>,
-    pub pub_key_b64: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct CredentialView {
-    pub id_b64: String,
-    pub cose_pubkey_b64: String,
-    pub sign_count: u32,
-}
-
-/// A single wrap of the user's X25519 private key.
-#[derive(Serialize, Deserialize)]
-pub struct KeyWrapView {
-    pub id: String,
-    pub kind: String, // 'passkey' | 'recovery'
-    pub credential_id_b64: Option<String>,
-    pub wrapped_blob_b64: String,
-    pub wrap_salt_b64: Option<String>,
-    /// JSON-encoded KDF params for recovery wraps; null for passkey wraps.
-    pub kdf_params: Option<String>,
-    pub label: Option<String>,
-    pub created_at: i64,
-}
+// UserView / CredentialView / KeyWrapView are the canonical wire
+// shapes — defined in `api-types` so the OpenAPI generator and the
+// worker share one definition. Re-exported here so existing
+// `crate::registry::UserView` import paths keep compiling.
+pub use api_types::{CredentialView, KeyWrapView, UserView};
 
 #[derive(Deserialize)]
 struct CreateSessionReq { sid: String, user_id: String, ttl_days: i64 }
@@ -1196,6 +1845,152 @@ struct AddAddressReq { user_id: String, address: String }
 struct UpdateProfileReq { user_id: String, display_name: Option<String> }
 #[derive(Deserialize)]
 struct UpdateSignCountReq { credential_id_b64: String, sign_count: u32 }
+
+#[derive(Deserialize)]
+struct CreateSecretLinkReq {
+    sender_user_id: String,
+    sender_addr: String,
+    sender_name: Option<String>,
+    recipient_addr: Option<String>,
+    password_check_b64: String,
+    password_wrap_b64: String,
+    argon_salt_b64: String,
+    /// JSON of the Argon2id params used to derive the wrap key, so the
+    /// viewer can reproduce the derivation without knowing app defaults.
+    kdf_params: String,
+    subject_ct_b64: String,
+    body_ct_b64: String,
+    hint: Option<String>,
+    /// Each: { r2_key, mime, size, filename_ct_b64 }
+    attachments: Vec<serde_json::Value>,
+    /// 'one_time' | '1h' | '24h' | '14d' | 'never'
+    policy: String,
+}
+
+#[derive(Deserialize)]
+struct OpenSecretLinkReq {
+    token: String,
+    password_check_b64: String,
+}
+
+#[derive(Deserialize)]
+struct RevokeSecretLinkReq {
+    token: String,
+    sender_user_id: String,
+}
+
+#[derive(Deserialize)]
+struct SecretLinkRow {
+    token: String,
+    sender_user_id: String,
+    sender_addr: String,
+    sender_name: Option<String>,
+    recipient_addr: Option<String>,
+    #[serde(with = "serde_bytes")]
+    password_check: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    password_wrap: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    argon_salt: Vec<u8>,
+    kdf_params: String,
+    #[serde(with = "serde_bytes")]
+    subject_ct: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    body_ct: Vec<u8>,
+    hint: Option<String>,
+    attachments: String,
+    policy: String,
+    created_at: i64,
+    expires_at: i64,
+    first_opened_at: Option<i64>,
+    opens_count: i64,
+    fail_count: i64,
+    revoked: i64,
+    #[serde(default)]
+    self_destructed: i64,
+}
+
+/// Grace window after a `one_time` link is first opened, during which the
+/// viewer can still pull attachment streams. Without this, a one-time
+/// link with attachments would be unusable: the body fetch consumes the
+/// link, then per-attachment downloads would see a revoked row.
+const ONE_TIME_GRACE_MS: i64 = 5 * 60 * 1000;
+
+fn policy_expiry(policy: &str, opened_at: i64, current_expires: i64) -> i64 {
+    // Cap the new expiry at the row's existing upper bound (created_at + 1y)
+    // so a "14d after open" link still gets purged eventually.
+    let candidate = match policy {
+        "one_time" => opened_at + ONE_TIME_GRACE_MS,
+        "1h"       => opened_at +  3_600_000,
+        "24h"      => opened_at + 86_400_000,
+        "14d"      => opened_at + 14 * 86_400_000,
+        "never"    => current_expires,
+        _          => current_expires,
+    };
+    candidate.min(current_expires)
+}
+
+/// Extract every R2 key referenced by the attachments JSON column. Used at
+/// revoke / purge time to clean up the blob storage in lockstep with the row.
+fn attachment_r2_keys(attachments_json: &str) -> Vec<String> {
+    let v: serde_json::Value =
+        serde_json::from_str(attachments_json).unwrap_or(serde_json::json!([]));
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| a.get("r2_key").and_then(|k| k.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Mirror of `attachment_r2_keys` for hosted_downloads' `files` column.
+fn hosted_file_r2_keys(files_json: &str) -> Vec<String> {
+    let v: serde_json::Value =
+        serde_json::from_str(files_json).unwrap_or(serde_json::json!([]));
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|f| f.get("r2_key").and_then(|k| k.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[derive(Deserialize)]
+struct CreateHostedReq {
+    sender_user_id: String,
+    sender_addr: String,
+    sender_name: Option<String>,
+    recipient_addrs: Vec<String>,
+    subject: Option<String>,
+    /// Each: { filename, mime, size, r2_key, ... }
+    files: Vec<serde_json::Value>,
+    total_bytes: i64,
+    ttl_days: i64,
+    /// Optional sender-only CEK wrap. The sender's client seals the
+    /// link's CEK to its own X25519 pubkey and passes the result here;
+    /// the row stores it so the sender can re-decrypt from the
+    /// dashboard later. Public viewer endpoints never see it.
+    #[serde(default)]
+    sender_cek_wrap_b64: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct HostedDownloadRow {
+    token: String,
+    sender_user_id: String,
+    sender_addr: String,
+    sender_name: Option<String>,
+    recipient_addrs: String,
+    subject: Option<String>,
+    files: String,
+    total_bytes: i64,
+    created_at: i64,
+    expires_at: i64,
+    download_count: i64,
+    revoked: i64,
+}
 
 // ---- schema ----
 
@@ -1284,6 +2079,111 @@ const SCHEMA: &[&str] = &[
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL
     )",
+
+    // Password-protected secret links — the "outside-user" portal modeled
+    // after ProtonMail's encrypted-for-outside-users flow.
+    //
+    // The recipient gets a URL ending in /s/<token> + an out-of-band password
+    // (sender shared by SMS / Signal / etc). The viewer derives an Argon2id
+    // key from the password, sends a check value, and on match the server
+    // returns the wrapped CEK + ciphertext for client-side decrypt.
+    //
+    // Server never sees: password, CEK, plaintext. All it sees: the check
+    // value (a one-way derivative of the password), the AES-GCM-wrapped CEK,
+    // and XChaCha20-Poly1305 ciphertext keyed by the CEK.
+    //
+    // `expires_at` is set at creation to created_at + 1 year as an upper
+    // bound; on first successful open it may be lowered per `policy`
+    // ('one_time', '1h', '24h', '14d', 'never'). The scheduled purge job
+    // sweeps rows past expires_at.
+    "CREATE TABLE IF NOT EXISTS secret_links (
+        token TEXT PRIMARY KEY,
+        sender_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        sender_addr TEXT NOT NULL,
+        sender_name TEXT,
+        -- Nullable: secret links created from the standalone /share UI
+        -- have no email recipient — the sender just wants a URL they can
+        -- hand to whoever (Signal, in person, paste into another app).
+        recipient_addr TEXT,
+        password_check BLOB NOT NULL,
+        password_wrap BLOB NOT NULL,
+        argon_salt BLOB NOT NULL,
+        kdf_params TEXT NOT NULL,
+        -- subject_ct and body_ct go to zero-length BLOB on self-destruct.
+        -- attachments JSON likewise goes to an empty array + R2 blobs deleted.
+        subject_ct BLOB NOT NULL,
+        body_ct BLOB NOT NULL,
+        hint TEXT,
+        attachments TEXT NOT NULL,
+        policy TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        first_opened_at INTEGER,
+        opens_count INTEGER NOT NULL DEFAULT 0,
+        fail_count INTEGER NOT NULL DEFAULT 0,
+        revoked INTEGER NOT NULL DEFAULT 0,
+        -- A self_destructed=1 row has had its ciphertext + attachment
+        -- blobs purged after 10 failed unlock attempts. Distinct from
+        -- `revoked` (manual sender action) and from `expires_at` past
+        -- (timed-out one-time / lifetime cap) so the Secrets dashboard
+        -- can show why a link died.
+        self_destructed INTEGER NOT NULL DEFAULT 0
+    )",
+    "CREATE INDEX IF NOT EXISTS secret_links_user ON secret_links(sender_user_id)",
+    "CREATE INDEX IF NOT EXISTS secret_links_expires ON secret_links(expires_at)",
+
+    // Hosted downloads — Firefox Send / Wormhole.app model. The
+    // bytes on R2 are ciphertext; the decryption key lives in the
+    // URL fragment of the share link (everything after `#`), which
+    // browsers never transmit. The server can route requests by
+    // `token` (the part before `#`) but cannot decrypt the contents.
+    //
+    // Distinct from secret_links because there's no user-chosen
+    // password: the fragment key is a 256-bit random value generated
+    // client-side. Anyone with the full URL can decrypt; anyone with
+    // only the token (e.g. seen in worker logs) cannot.
+    //
+    // What the server stores per-row:
+    //   - subject (cleartext) — used to render the email body that
+    //     wraps the link. Optional, may be empty for /share-style
+    //     standalone uses.
+    //   - files JSON: each entry has r2_key + ciphertext metadata
+    //     (chunk sizes, encrypted filename, encrypted mime). The
+    //     plaintext filename and mime never reach the server.
+    //
+    // On revoke or expiry the worker deletes the matching R2 blobs.
+    "CREATE TABLE IF NOT EXISTS hosted_downloads (
+        token TEXT PRIMARY KEY,
+        sender_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        sender_addr TEXT NOT NULL,
+        sender_name TEXT,
+        recipient_addrs TEXT NOT NULL,
+        subject TEXT,
+        files TEXT NOT NULL,
+        total_bytes INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        download_count INTEGER NOT NULL DEFAULT 0,
+        revoked INTEGER NOT NULL DEFAULT 0,
+        -- CEK sealed to sender's X25519 pubkey. Lets the sender
+        -- re-decrypt their own hosted downloads from the dashboard
+        -- without having kept the URL fragment around. Never
+        -- exposed on the public /api/d/:token endpoint — only
+        -- returned to the authenticated sender via /api/hosted/mine.
+        sender_cek_wrap BLOB
+    )",
+    "CREATE INDEX IF NOT EXISTS hosted_downloads_user ON hosted_downloads(sender_user_id)",
+    "CREATE INDEX IF NOT EXISTS hosted_downloads_expires ON hosted_downloads(expires_at)",
+];
+
+const MIGRATIONS: &[&str] = &[
+    // Added when we shipped self-destruct-after-10-failures. Existing
+    // tables predate the column; the ALTER errors (and is ignored) on
+    // already-migrated DOs.
+    "ALTER TABLE secret_links ADD COLUMN self_destructed INTEGER NOT NULL DEFAULT 0",
+    // Added when hosted downloads became E2E and the sender needed a
+    // way to re-decrypt from the dashboard.
+    "ALTER TABLE hosted_downloads ADD COLUMN sender_cek_wrap BLOB",
 ];
 
 fn now_ms() -> i64 {

@@ -1,7 +1,9 @@
 //! Threads, messages, send.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use worker::*;
+
+use api_types::{SendReq, SendResp};
 
 use crate::config::AppConfig;
 use crate::error::{ApiError, ApiResult};
@@ -117,45 +119,8 @@ pub async fn delete_message(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> Ap
 // We send via the `EMAIL` binding, then store an encrypted copy in the
 // sender's mailbox by sealing the plaintext to the sender's own pubkey.
 
-#[derive(Deserialize)]
-struct SendReq {
-    /// Sender address. Must be owned by the current user.
-    from: String,
-    /// Optional display name for the From header.
-    from_name: Option<String>,
-    to: Vec<String>,
-    #[serde(default)]
-    cc: Vec<String>,
-    #[serde(default)]
-    bcc: Vec<String>,
-    subject: String,
-    text: String,
-    html: Option<String>,
-    in_reply_to: Option<String>,
-    references: Option<String>,
-    /// Attachments referenced by R2 key. Each entry carries the original
-    /// filename twice: plain (used in outbound MIME so the recipient sees
-    /// a real name) and ciphertext (sealed to the user's own pubkey, used
-    /// for the sender's at-rest copy in the DO).
-    #[serde(default)]
-    attachments: Vec<AttachmentRef>,
-}
-
-#[derive(Deserialize, Clone)]
-struct AttachmentRef {
-    r2_key: String,
-    /// PLAIN filename — used in outbound MIME headers only.
-    filename: String,
-    /// Sealed filename — what we store in the sender's mailbox row.
-    filename_ct_b64: Option<String>,
-    mime: String,
-}
-
-#[derive(Serialize)]
-struct SendResp {
-    message_id: String,
-    thread_id: String,
-}
+// SendReq / AttachmentRef / SendResp are defined once in api-types and
+// imported above. Same JSON shape; one less place to drift.
 
 pub async fn send(mut req: HttpRequest, env: &Env, cfg: &AppConfig) -> ApiResult<Response> {
     let s = require_auth(&req, env).await?;
@@ -191,6 +156,15 @@ pub async fn send(mut req: HttpRequest, env: &Env, cfg: &AppConfig) -> ApiResult
         .and_then(|s| crate::b64::url_decode(s).ok())
         .and_then(|v| <[u8; 32]>::try_from(v.as_slice()).ok())
         .ok_or_else(|| ApiError::Internal("user has no pubkey".into()))?;
+
+    // Hosted-attachment conversion used to happen here (server reading
+    // attach/ bytes, copying to hosted/, splicing a link into the
+    // body). That was incompatible with E2E hosted: the server can no
+    // longer touch the bytes. The client now handles the hosted
+    // upload + link-building entirely before calling /api/messages/send,
+    // so by the time we get here the body already contains the
+    // /d/<token>#k=<key> URL(s) and `attachments` is just the inline
+    // MIME files.
 
     // Build the outbound MIME and send via the binding.
     let message_id = format!("{}@{}", crate::ids::message(), domain_of(&body.from));

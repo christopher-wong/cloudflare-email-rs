@@ -58,6 +58,8 @@ pub fn wrap()       -> String { with_prefix("wrap", &ksuid()) }
 pub fn session()   -> String { with_prefix("sid", &random_token()) }
 pub fn invite()    -> String { with_prefix("inv", &random_token()) }
 pub fn challenge() -> String { with_prefix("chl", &random_token()) }
+pub fn secret_link() -> String { with_prefix("slk", &random_token()) }
+pub fn hosted_link() -> String { with_prefix("hsl", &random_token()) }
 
 // ---- Inspection -----------------------------------------------------------
 

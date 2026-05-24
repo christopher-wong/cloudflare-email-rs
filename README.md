@@ -269,6 +269,10 @@ local emulator for every binding**, and the frontend either gets served by
 that worker or runs separately on `vite dev` proxying to it. You don't need
 to deploy to test anything except real inbound email.
 
+**Deep technical documentation** (architecture diagrams, worker & frontend internals, Mermaid sequence diagrams) is in `docs/`. Read `docs/README.md` first when doing anything non-trivial. These docs are maintained for both humans and coding agents.
+
+In particular, [docs/cloudflare-setup.md](docs/cloudflare-setup.md) contains the authoritative guide for Email Routing catch-all rules, Email Sending, R2, custom domains, and all the dashboard-vs-CLI gotchas.
+
 ### What runs where in `wrangler dev`
 
 ```

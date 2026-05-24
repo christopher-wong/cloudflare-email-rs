@@ -16,6 +16,11 @@ import Sent from '@/pages/Sent';
 import Labels from '@/pages/Labels';
 import Settings from '@/pages/Settings';
 import Admin from '@/pages/Admin';
+import Secrets from '@/pages/Secrets';
+import Share from '@/pages/Share';
+import SecretView from '@/pages/SecretView';
+import Hosted from '@/pages/Hosted';
+import HostedView from '@/pages/HostedView';
 import NotFound from '@/pages/NotFound';
 
 import { AppContext, useApp, useAppProvider } from '@/lib/store';
@@ -63,6 +68,14 @@ function Router() {
         <Route path="/login" element={<Login />} />
         <Route path="/bootstrap" element={<Bootstrap />} />
         <Route path="/enroll" element={<Enroll />} />
+        {/* Public viewer for password-protected secret links. Must be
+            reachable without an account — the recipient is typically an
+            outside user without one. */}
+        <Route path="/s/:token" element={<SecretView />} />
+        {/* Public landing page for hosted attachment downloads (large
+            files auto-converted from outbound email). Same public
+            access posture as /s/:token. */}
+        <Route path="/d/:token" element={<HostedView />} />
         {/* Any other path on the public tree bounces to the landing.
             Replaces the old behavior where deep links would hit Authed
             and force a /login redirect. */}
@@ -76,6 +89,10 @@ function Router() {
       <Route path="/bootstrap" element={<Bootstrap />} />
       <Route path="/enroll" element={<Enroll />} />
       <Route path="/login" element={<Login />} />
+      {/* Also reachable to signed-in users (no app chrome — the link is
+          its own thing). */}
+      <Route path="/s/:token" element={<SecretView />} />
+      <Route path="/d/:token" element={<HostedView />} />
       <Route element={<AuthedShell />}>
         <Route element={<Chrome />}>
           <Route index element={<Inbox />} />
@@ -85,6 +102,9 @@ function Router() {
           <Route path="/sent" element={<Sent />} />
           <Route path="/labels" element={<Labels />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/secrets" element={<Secrets />} />
+          <Route path="/share" element={<Share />} />
+          <Route path="/hosted" element={<Hosted />} />
           <Route path="/admin" element={<Admin />} />
         </Route>
       </Route>

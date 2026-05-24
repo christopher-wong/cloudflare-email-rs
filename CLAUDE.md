@@ -67,6 +67,24 @@ Recovery login is a two-step proof exchange (`/api/auth/recovery/begin` then `/v
 
 Multiple addresses per user. Plus-addressing canonicalized via `config::canonical_address()` (`christopher+anything@` → `christopher@`) before any lookup. When adding domain-aware logic, use `cfg.primary_domain` for address ownership and `cfg.app_host` for WebAuthn / cookies / origins.
 
+## Detailed Technical Documentation (Humans + Agents)
+
+The repository now ships living technical documentation under `docs/` that is written to be equally useful to humans and coding agents:
+
+- [docs/README.md](docs/README.md) — entry point + document map
+- [docs/architecture.md](docs/architecture.md) — system block diagrams, storage tiers, crypto root of trust, major flows (Mermaid)
+- [docs/worker.md](docs/worker.md) — full Rust worker design (three event handlers, RegistryDO vs MailboxDO, inbound email sequence, build pinning, invariants)
+- [docs/web.md](docs/web.md) — frontend (client crypto, WebAuthn enrollment/login sequences, state model, realtime, page responsibilities)
+- [docs/cloudflare-setup.md](docs/cloudflare-setup.md) — the complete Cloudflare configuration guide (Email Sending enable, Email Routing catch-all → Worker, R2, custom domains, the dashboard-only catch-all rule, local dev overrides, verification, and all the historical gotchas)
+
+**When you are about to edit code**, read the relevant diagram in `docs/architecture.md` first, then the line-number pointers in `worker.md` or `web.md`. For anything involving production deployment, Email Routing, or Email Sending, also read `docs/cloudflare-setup.md`. These docs are the single source of truth for call order, authorization boundaries, and Cloudflare resource configuration.
+
+**For Agents (new in 2026 docs effort)**:
+- Every major flow now has an embedded Mermaid sequence diagram — use it to validate your mental model before writing or refactoring.
+- "For Agents" and "**INVARIANT**" callouts in the docs are non-negotiable rules.
+- When you add a new route, new crypto primitive, or change a DO schema, you are expected to update the corresponding diagram + the "touch points" table in the doc.
+- The old "Project layout pointers" list below is now secondary — prefer the docs/ versions because they contain the diagrams.
+
 ## Cloudflare Workers / Rust gotchas
 
 **This is wasm32-unknown-unknown, not tokio.** workers-rs bridges async via `wasm-bindgen-futures`. Do not use `tokio::spawn`, `tokio::time::sleep`, `tokio::sync::Mutex` — they don't compile to wasm. Use `worker::Delay` for timers, `worker::*` async helpers, and RustCrypto crates (with `default-features = false` and `getrandom` `js` feature where needed).
@@ -119,3 +137,5 @@ Root cause is always the same: serde's default `Vec<u8>` deserialization uses `v
 - `worker/src/config.rs` — env vars, domain helpers, plus-address canonicalization
 - `openapi-gen/` — native (non-wasm) binary that emits `openapi.json` from `#[utoipa::path]` annotations
 - `web/src/lib/{api,crypto,webauthn,store}.ts` — frontend wiring
+
+**Strongly prefer the living documentation in `docs/` (architecture.md, worker.md, web.md)** over the bullet list above when you need to understand flows or call order. The docs contain up-to-date Mermaid diagrams and "For Agents" guidance that were written during the 2026 documentation pass. Update them when you change architecture.

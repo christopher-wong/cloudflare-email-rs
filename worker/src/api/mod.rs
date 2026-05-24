@@ -7,9 +7,13 @@ pub mod auth;
 pub mod drafts;
 pub mod labels;
 pub mod mail;
+pub mod hosted;
 pub mod me;
 pub mod misc;
+pub mod orphan;
 pub mod passkeys;
+pub mod secret;
+pub mod uploads;
 
 use serde::{Deserialize, Serialize};
 use worker::*;
