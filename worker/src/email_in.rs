@@ -266,6 +266,16 @@ async fn handle_impl(
         let snippet: String = display_body.chars().take(140).collect();
         let body_ct = crate::crypto::seal_to(&pk, display_body.as_bytes())?;
         let snippet_ct = crate::crypto::seal_to(&pk, snippet.as_bytes())?;
+        // If the sender provided text/html, seal it alongside the
+        // text fallback so the viewer can render the real layout in
+        // a sandboxed iframe. body_ct stays the text representation
+        // for snippets / search / fallback.
+        let body_html_ct = match html_body.as_deref() {
+            Some(h) if !h.is_empty() => {
+                Some(crate::crypto::seal_to(&pk, h.as_bytes())?)
+            }
+            _ => None,
+        };
 
         // Store raw MIME ciphertext too — useful for showing original source
         // and (eventually) forwarding/exports without re-parsing.
@@ -300,6 +310,7 @@ async fn handle_impl(
                 "snippet_ct_b64": b64::url_encode(&snippet_ct),
                 "subject_ct_b64": b64::url_encode(&subject_ct),
                 "body_ct_b64": b64::url_encode(&body_ct),
+                "body_html_ct_b64": body_html_ct.as_deref().map(b64::url_encode),
                 "raw_r2_key": raw_key,
                 "size_bytes": raw.len() as i64,
             })),

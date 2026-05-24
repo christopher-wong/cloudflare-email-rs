@@ -56,6 +56,10 @@ mail-parser = { version = "0.9", default-features = false }
 base64 = "0.22"
 hex = "0.4"
 urlencoding = "2.1"
+# Used by the image proxy to parse + validate inbound URLs (scheme,
+# host) before fetching. workers-rs's `Fetch::Url` variant takes a
+# `url::Url` anyway.
+url = "2"
 
 # Time / IDs
 chrono = { version = "0.4", default-features = false, features = ["alloc", "wasmbind"] }

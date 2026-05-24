@@ -330,6 +330,12 @@ pub struct MessageView {
     pub sent_at: i64,
     pub subject_ct_b64: Option<String>,
     pub body_ct_b64: Option<String>,
+    /// Optional sealed HTML body. Inbound messages with a text/html
+    /// MIME part populate this; outbound messages composed with rich
+    /// formatting do too. When present the viewer prefers it (rendered
+    /// in a sandboxed iframe) and falls back to body_ct otherwise.
+    #[serde(default)]
+    pub body_html_ct_b64: Option<String>,
     pub snippet_ct_b64: Option<String>,
     pub size_bytes: i64,
 }

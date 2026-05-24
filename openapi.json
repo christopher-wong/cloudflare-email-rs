@@ -934,6 +934,68 @@
         }
       }
     },
+    "/api/img": {
+      "get": {
+        "tags": [
+          "mail"
+        ],
+        "description": "Image proxy. Fetches a remote image URL through the worker so the recipient's IP never reaches the sender. Auth'd — only the email viewer should consume this. Returns image bytes with a 24h public cache header.",
+        "operationId": "proxy_image",
+        "parameters": [
+          {
+            "name": "u",
+            "in": "query",
+            "description": "Absolute http(s) image URL to fetch.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes; content-type passthrough from upstream.",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad URL, blocked host, or non-image content-type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Upstream returned non-2xx.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/drafts": {
       "get": {
         "tags": [
@@ -3895,6 +3957,13 @@
               "string",
               "null"
             ]
+          },
+          "body_html_ct_b64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional sealed HTML body. Inbound messages with a text/html\nMIME part populate this; outbound messages composed with rich\nformatting do too. When present the viewer prefers it (rendered\nin a sandboxed iframe) and falls back to body_ct otherwise."
           },
           "snippet_ct_b64": {
             "type": [

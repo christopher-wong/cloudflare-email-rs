@@ -346,6 +346,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/img": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Image proxy. Fetches a remote image URL through the worker so the recipient's IP never reaches the sender. Auth'd — only the email viewer should consume this. Returns image bytes with a 24h public cache header. */
+        get: operations["proxy_image"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/drafts": {
         parameters: {
             query?: never;
@@ -1215,6 +1232,13 @@ export interface components {
             sent_at: number;
             subject_ct_b64?: string | null;
             body_ct_b64?: string | null;
+            /**
+             * @description Optional sealed HTML body. Inbound messages with a text/html
+             *     MIME part populate this; outbound messages composed with rich
+             *     formatting do too. When present the viewer prefers it (rendered
+             *     in a sandboxed iframe) and falls back to body_ct otherwise.
+             */
+            body_html_ct_b64?: string | null;
             snippet_ct_b64?: string | null;
             /** Format: int64 */
             size_bytes: number;
@@ -2282,6 +2306,55 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    proxy_image: {
+        parameters: {
+            query: {
+                /** @description Absolute http(s) image URL to fetch. */
+                u: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Image bytes; content-type passthrough from upstream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            /** @description Bad URL, blocked host, or non-image content-type. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Upstream returned non-2xx. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

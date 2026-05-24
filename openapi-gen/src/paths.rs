@@ -153,6 +153,23 @@ pub fn list_addresses() {}
 
 #[utoipa::path(
     get,
+    path = "/api/img",
+    tag = "mail",
+    description = "Image proxy. Fetches a remote image URL through the worker so the recipient's IP never reaches the sender. Auth'd — only the email viewer should consume this. Returns image bytes with a 24h public cache header.",
+    params(
+        ("u" = String, Query, description = "Absolute http(s) image URL to fetch."),
+    ),
+    responses(
+        (status = 200, description = "Image bytes; content-type passthrough from upstream.", body = String, content_type = "image/*"),
+        (status = 400, description = "Bad URL, blocked host, or non-image content-type.", body = ErrorResponse),
+        (status = 401, body = ErrorResponse),
+        (status = 404, description = "Upstream returned non-2xx.", body = ErrorResponse),
+    ),
+)]
+pub fn proxy_image() {}
+
+#[utoipa::path(
+    get,
     path = "/api/me/contacts",
     tag = "me",
     description = "Derived contact list — every person the user has emailed or received from, deduped by canonical address, sorted by most recent interaction. Backs the to/cc/bcc autocomplete in Compose.",

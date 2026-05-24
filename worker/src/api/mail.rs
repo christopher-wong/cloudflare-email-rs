@@ -175,6 +175,13 @@ pub async fn send(mut req: HttpRequest, env: &Env, cfg: &AppConfig) -> ApiResult
     // Seal a copy for sender storage. Subject + body + each attachment.
     let subject_ct = crate::crypto::seal_to(&pub_key, body.subject.as_bytes())?;
     let body_ct = crate::crypto::seal_to(&pub_key, body.text.as_bytes())?;
+    // Keep the HTML version for the sender's Sent-folder view so they
+    // see the same rich formatting the recipient does. Mirrors what
+    // inbound storage does for received messages.
+    let body_html_ct = match body.html.as_deref() {
+        Some(h) if !h.is_empty() => Some(crate::crypto::seal_to(&pub_key, h.as_bytes())?),
+        _ => None,
+    };
     let snippet = make_snippet(&body.text);
     let snippet_ct = crate::crypto::seal_to(&pub_key, snippet.as_bytes())?;
 
@@ -196,6 +203,7 @@ pub async fn send(mut req: HttpRequest, env: &Env, cfg: &AppConfig) -> ApiResult
         "snippet_ct_b64": crate::b64::url_encode(&snippet_ct),
         "subject_ct_b64": crate::b64::url_encode(&subject_ct),
         "body_ct_b64": crate::b64::url_encode(&body_ct),
+        "body_html_ct_b64": body_html_ct.as_deref().map(crate::b64::url_encode),
         "raw_r2_key": null,
         "size_bytes": (body.subject.len() + body.text.len()) as i64,
     });

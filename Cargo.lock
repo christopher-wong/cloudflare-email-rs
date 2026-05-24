@@ -103,6 +103,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+ "url",
  "urlencoding",
  "worker",
  "worker-macros",

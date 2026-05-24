@@ -10,6 +10,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import Toolbar from '@/components/Toolbar';
 import Loader from '@/components/Loader';
 import EmptyState from '@/components/EmptyState';
+import HtmlMessageFrame from '@/components/HtmlMessageFrame';
 
 import { marked } from 'marked';
 
@@ -39,6 +40,9 @@ interface Decoded {
   row: api.MessageRow;
   subject: string;
   body: string;
+  /** Decrypted HTML body when one was stored. Null for legacy
+   *  text-only messages — the renderer falls back to `body`. */
+  bodyHtml: string | null;
   attachments: DecodedAttachment[];
 }
 
@@ -48,6 +52,10 @@ export default function Thread() {
   const [msgs, setMsgs] = useState<api.MessageRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Per-message "show images" — defaults to false (images blocked).
+  // The button on the message swaps the iframe over to the proxied
+  // image URLs so the user gets the real layout without leaking IP.
+  const [imagesShown, setImagesShown] = useState<Record<string, boolean>>({});
   // attachments keyed by message_id
   const [attsByMsg, setAttsByMsg] = useState<Record<string, AttachmentRow[]>>({});
   // Tracks whether we've already auto-expanded the latest message on the
@@ -177,12 +185,22 @@ export default function Thread() {
     return msgs.map((row) => {
       let subject = '';
       let body = '';
+      let bodyHtml: string | null = null;
       try {
         subject = openSealedString(b64uDecode(row.subject_ct_b64), priv);
       } catch { subject = '[decrypt failed]'; }
       try {
         body = openSealedString(b64uDecode(row.body_ct_b64), priv);
       } catch { body = '[decrypt failed]'; }
+      // Inbound HTML emails ship the real html alongside the text
+      // fallback — when present we render it in a sandboxed iframe
+      // (real layout, no scripts). body stays the text representation
+      // for snippets and the markdown fallback path.
+      if (row.body_html_ct_b64) {
+        try {
+          bodyHtml = openSealedString(b64uDecode(row.body_html_ct_b64), priv);
+        } catch { /* keep text fallback */ }
+      }
       const rawAtts = attsByMsg[row.id] ?? [];
       const attachments: DecodedAttachment[] = rawAtts.map((a) => {
         let filename = a.r2_key.split('/').pop() ?? 'attachment';
@@ -193,7 +211,7 @@ export default function Thread() {
         }
         return { row: a, filename };
       });
-      return { row, subject, body, attachments };
+      return { row, subject, body, bodyHtml, attachments };
     });
   }, [msgs, attsByMsg]);
 
@@ -330,27 +348,51 @@ export default function Thread() {
                     {absoluteDate(d.row.sent_at)}
                   </div>
                   {/*
-                    Outbound bodies are the user's own WYSIWYG HTML (from
-                    contentEditable in Compose) — render as-is. Inbound
-                    bodies are plain text post html_to_text on the server,
-                    so we run them through marked.parse to get paragraphs,
-                    autolinked URLs, and consistent visual output. Either
-                    way the rendered shape is the same: an HTML fragment
-                    we drop into the same `prose-sm` wrapper.
+                    Render policy:
+                    - Real HTML body present (typical for marketing /
+                      transactional mail from any modern sender)
+                      → sandboxed iframe with the sender's HTML
+                      preserved. No scripts run, link clicks open in
+                      new tabs, the iframe self-sizes.
+                    - No HTML body: outbound bodies are the user's own
+                      WYSIWYG HTML and render in-page; inbound text-
+                      only goes through marked.parse for autolinking
+                      and paragraph breaks.
                   */}
-                  <div
-                    className="prose-sm font-sans text-sm leading-snug"
-                    dangerouslySetInnerHTML={{
-                      __html:
-                        d.row.direction === 'out'
-                          ? d.body
-                          : (marked.parse(d.body, {
-                              async: false,
-                              gfm: true,
-                              breaks: true,
-                            }) as string),
-                    }}
-                  />
+                  {d.bodyHtml ? (
+                    <>
+                      <HtmlMessageFrame
+                        html={d.bodyHtml}
+                        loadImages={imagesShown[d.row.id] ?? false}
+                      />
+                      {!imagesShown[d.row.id] && (
+                        <button
+                          type="button"
+                          className="btn label mt-2 text-xs"
+                          onClick={() =>
+                            setImagesShown((p) => ({ ...p, [d.row.id]: true }))
+                          }
+                          title="Load remote images via our proxy. The sender will not see your IP."
+                        >
+                          show images
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <div
+                      className="prose-sm font-sans text-sm leading-snug"
+                      dangerouslySetInnerHTML={{
+                        __html:
+                          d.row.direction === 'out'
+                            ? d.body
+                            : (marked.parse(d.body, {
+                                async: false,
+                                gfm: true,
+                                breaks: true,
+                              }) as string),
+                      }}
+                    />
+                  )}
                   {d.attachments.length > 0 && (
                     <div className="hair-t mt-3 flex flex-wrap items-center gap-2 pt-3">
                       {d.attachments.map((a) => (

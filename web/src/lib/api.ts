@@ -118,6 +118,10 @@ export interface MessageRow {
   snippet_ct_b64: string | null;
   subject_ct_b64: string;
   body_ct_b64: string;
+  /** Optional sealed HTML body. When present the Thread view renders
+   *  it in a sandboxed iframe and falls back to `body_ct_b64` only
+   *  when this is null (legacy text-only messages). */
+  body_html_ct_b64: string | null;
   size_bytes: number;
   labels: string[];
 }

@@ -54,6 +54,7 @@ use schemas as s;
         p::delete_message,
         p::send_message,
         p::realtime,
+        p::proxy_image,
 
         // Drafts
         p::drafts_upsert,

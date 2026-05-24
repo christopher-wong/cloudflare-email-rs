@@ -94,6 +94,13 @@ impl MailboxDO {
         for stmt in SCHEMA {
             sql.exec(stmt, None)?;
         }
+        // Best-effort migrations. ALTER TABLE ADD COLUMN errors with
+        // "duplicate column" on subsequent runs — swallow so this is
+        // idempotent. New columns must be NULLable (no NOT NULL
+        // without default) because existing rows can't satisfy them.
+        for stmt in MIGRATIONS {
+            let _ = sql.exec(stmt, None);
+        }
         Ok(())
     }
 
@@ -112,12 +119,19 @@ impl MailboxDO {
             ),
             None => None,
         };
+        let body_html_ct = match body.body_html_ct_b64.as_deref() {
+            Some(s) => Some(
+                crate::b64::url_decode(s)
+                    .map_err(|_| Error::RustError("body_html_ct b64".into()))?,
+            ),
+            None => None,
+        };
         self.sql().exec(
             "INSERT INTO messages (id, thread_id, message_id, in_reply_to, refs,
                 from_addr, from_name, to_addrs, cc_addrs, bcc_addrs,
                 sent_at, received_at, direction, read, starred,
-                snippet_ct, subject_ct, body_ct, raw_r2_key, size_bytes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
+                snippet_ct, subject_ct, body_ct, body_html_ct, raw_r2_key, size_bytes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
             Some(vec![
                 body.id.clone().into(),
                 thread_id.clone().into(),
@@ -136,6 +150,7 @@ impl MailboxDO {
                 snippet_ct.into(),
                 subject_ct.into(),
                 body_ct.into(),
+                body_html_ct.into(),
                 body.raw_r2_key.clone().into(),
                 body.size_bytes.into(),
             ]),
@@ -404,7 +419,7 @@ impl MailboxDO {
         let sql_text = format!(
             "SELECT id, thread_id, message_id, in_reply_to, from_addr, from_name,
                 to_addrs, cc_addrs, bcc_addrs, sent_at, received_at, direction,
-                read, starred, snippet_ct, subject_ct, body_ct, size_bytes
+                read, starred, snippet_ct, subject_ct, body_ct, body_html_ct, size_bytes
              FROM messages WHERE {where_clause} ORDER BY sent_at ASC"
         );
         #[derive(Deserialize)]
@@ -429,6 +444,8 @@ impl MailboxDO {
             subject_ct: Vec<u8>,
             #[serde(with = "serde_bytes")]
             body_ct: Vec<u8>,
+            #[serde(with = "serde_bytes", default)]
+            body_html_ct: Option<Vec<u8>>,
             size_bytes: i64,
         }
         let rows: Vec<Row> = self
@@ -459,6 +476,7 @@ impl MailboxDO {
                 snippet_ct_b64: r.snippet_ct.as_deref().map(crate::b64::url_encode),
                 subject_ct_b64: crate::b64::url_encode(&r.subject_ct),
                 body_ct_b64: crate::b64::url_encode(&r.body_ct),
+                body_html_ct_b64: r.body_html_ct.as_deref().map(crate::b64::url_encode),
                 size_bytes: r.size_bytes,
                 labels,
             });
@@ -1097,7 +1115,7 @@ impl MailboxDO {
             };
         }
         let threads        = step!("threads",        dump_table(&sql, "SELECT * FROM threads"));
-        let messages       = step!("messages",       dump_blob_table(&sql, "SELECT id, thread_id, message_id, in_reply_to, refs, from_addr, from_name, to_addrs, cc_addrs, bcc_addrs, sent_at, received_at, direction, read, starred, snippet_ct, subject_ct, body_ct, raw_r2_key, size_bytes FROM messages", &["snippet_ct", "subject_ct", "body_ct"]));
+        let messages       = step!("messages",       dump_blob_table(&sql, "SELECT id, thread_id, message_id, in_reply_to, refs, from_addr, from_name, to_addrs, cc_addrs, bcc_addrs, sent_at, received_at, direction, read, starred, snippet_ct, subject_ct, body_ct, body_html_ct, raw_r2_key, size_bytes FROM messages", &["snippet_ct", "subject_ct", "body_ct", "body_html_ct"]));
         let drafts         = step!("drafts",         dump_blob_table(&sql, "SELECT id, in_reply_to_message_id, to_addrs, cc_addrs, bcc_addrs, subject_ct, body_ct, attachments, updated_at FROM drafts", &["subject_ct", "body_ct"]));
         let labels         = step!("labels",         dump_table(&sql, "SELECT * FROM labels"));
         let message_labels = step!("message_labels", dump_table(&sql, "SELECT * FROM message_labels"));
@@ -1122,8 +1140,8 @@ impl MailboxDO {
         load_table(&sql, &body, "labels",
             &["id", "name", "created_at"], &[])?;
         load_table(&sql, &body, "messages",
-            &["id", "thread_id", "message_id", "in_reply_to", "refs", "from_addr", "from_name", "to_addrs", "cc_addrs", "bcc_addrs", "sent_at", "received_at", "direction", "read", "starred", "snippet_ct", "subject_ct", "body_ct", "raw_r2_key", "size_bytes"],
-            &["snippet_ct", "subject_ct", "body_ct"])?;
+            &["id", "thread_id", "message_id", "in_reply_to", "refs", "from_addr", "from_name", "to_addrs", "cc_addrs", "bcc_addrs", "sent_at", "received_at", "direction", "read", "starred", "snippet_ct", "subject_ct", "body_ct", "body_html_ct", "raw_r2_key", "size_bytes"],
+            &["snippet_ct", "subject_ct", "body_ct", "body_html_ct"])?;
         load_table(&sql, &body, "drafts",
             &["id", "in_reply_to_message_id", "to_addrs", "cc_addrs", "bcc_addrs", "subject_ct", "body_ct", "attachments", "updated_at"],
             &["subject_ct", "body_ct"])?;
@@ -1155,6 +1173,11 @@ pub struct InsertMessageReq {
     pub snippet_ct_b64: Option<String>,
     pub subject_ct_b64: String,
     pub body_ct_b64: String,
+    /// Optional sealed HTML body. When present, the viewer renders
+    /// this in a sandboxed iframe; otherwise it falls back to
+    /// rendering body_ct as text.
+    #[serde(default)]
+    pub body_html_ct_b64: Option<String>,
     pub raw_r2_key: Option<String>,
     pub size_bytes: i64,
 }
@@ -1211,6 +1234,7 @@ struct MessageRow {
     snippet_ct_b64: Option<String>,
     subject_ct_b64: String,
     body_ct_b64: String,
+    body_html_ct_b64: Option<String>,
     size_bytes: i64,
     labels: Vec<String>,
 }
@@ -1272,6 +1296,13 @@ struct AttachmentRow {
     size_bytes: i64,
 }
 
+const MIGRATIONS: &[&str] = &[
+    // Added so we can render HTML emails properly instead of just the
+    // text/plain alternative. NULL on existing rows (old messages will
+    // fall back to body_ct rendering).
+    "ALTER TABLE messages ADD COLUMN body_html_ct BLOB",
+];
+
 const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)",
     "CREATE TABLE IF NOT EXISTS threads (
@@ -1304,6 +1335,11 @@ const SCHEMA: &[&str] = &[
         snippet_ct BLOB,
         subject_ct BLOB NOT NULL,
         body_ct BLOB NOT NULL,
+        -- Optional sealed HTML body. Inbound messages with a text/html
+        -- part populate this in addition to body_ct (text/plain or
+        -- html_to_text fallback). Outbound messages composed with rich
+        -- formatting populate it too. NULL → render body_ct as text.
+        body_html_ct BLOB,
         raw_r2_key TEXT,
         size_bytes INTEGER NOT NULL DEFAULT 0
     )",
