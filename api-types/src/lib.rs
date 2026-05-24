@@ -800,6 +800,32 @@ pub struct AdminStatusResp {
     pub user_count: u64,
 }
 
+// ---- Contacts -----------------------------------------------------------
+
+/// One row in the authenticated user's derived contact list.
+///
+/// Derived (not stored): we scan the user's MailboxDO messages on each
+/// `/api/contacts` call and dedupe by canonical email address. There is
+/// no separate contacts table — the source of truth is the message log.
+/// The client caches the result in IndexedDB with a short TTL and
+/// invalidates on send.
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct ContactView {
+    /// Canonical email address (plus-suffix stripped, lowercased).
+    pub addr: String,
+    /// Most recent display name we've seen for this address, if any.
+    /// Comes from `from_name` on inbound messages; outbound recipients
+    /// have no name source (we only get raw addresses there) so it's
+    /// `None` until they reply.
+    pub name: Option<String>,
+    /// `sent_at` of the most recent message touching this contact.
+    pub last_seen_at: i64,
+    /// Total number of messages (inbound + outbound) involving this
+    /// contact. Used by the typeahead to break ties when scoring
+    /// suggestions.
+    pub message_count: i64,
+}
+
 // ---- Public config -------------------------------------------------------
 
 #[derive(Serialize, Deserialize, ToSchema)]

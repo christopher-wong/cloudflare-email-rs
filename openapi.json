@@ -411,6 +411,40 @@
         }
       }
     },
+    "/api/me/contacts": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "description": "Derived contact list — every person the user has emailed or received from, deduped by canonical address, sorted by most recent interaction. Backs the to/cc/bcc autocomplete in Compose.",
+        "operationId": "list_contacts",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ContactView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me/passkeys": {
       "get": {
         "tags": [
@@ -3048,6 +3082,38 @@
           },
           "enroll_url": {
             "type": "string"
+          }
+        }
+      },
+      "ContactView": {
+        "type": "object",
+        "description": "One row in the authenticated user's derived contact list.\n\nDerived (not stored): we scan the user's MailboxDO messages on each\n`/api/contacts` call and dedupe by canonical email address. There is\nno separate contacts table — the source of truth is the message log.\nThe client caches the result in IndexedDB with a short TTL and\ninvalidates on send.",
+        "required": [
+          "addr",
+          "last_seen_at",
+          "message_count"
+        ],
+        "properties": {
+          "addr": {
+            "type": "string",
+            "description": "Canonical email address (plus-suffix stripped, lowercased)."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Most recent display name we've seen for this address, if any.\nComes from `from_name` on inbound messages; outbound recipients\nhave no name source (we only get raw addresses there) so it's\n`None` until they reply."
+          },
+          "last_seen_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`sent_at` of the most recent message touching this contact."
+          },
+          "message_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total number of messages (inbound + outbound) involving this\ncontact. Used by the typeahead to break ties when scoring\nsuggestions."
           }
         }
       },

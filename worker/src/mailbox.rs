@@ -42,6 +42,7 @@ impl DurableObject for MailboxDO {
             (Method::Delete, "/messages") => self.delete_message(req).await,
             (Method::Post, "/drafts") => self.upsert_draft(req).await,
             (Method::Get, "/drafts") => self.list_drafts().await,
+            (Method::Get, "/contacts") => self.list_contacts().await,
             (Method::Delete, "/drafts") => self.delete_draft(req).await,
             (Method::Post, "/labels") => self.create_label(req).await,
             (Method::Get, "/labels") => self.list_labels().await,
@@ -751,6 +752,103 @@ impl MailboxDO {
             "updated_at": now,
         }));
         Response::from_json(&serde_json::json!({ "id": id, "updated_at": now }))
+    }
+
+    /// Derive a contact list from the user's message history.
+    ///
+    /// For inbound messages: the sender (from_addr + from_name) is the
+    /// contact. For outbound messages: every recipient on to/cc/bcc.
+    /// Bcc is included even though the recipient header was hidden —
+    /// the sender knows they emailed them, so it's still a contact.
+    ///
+    /// Dedup is by canonical email address (plus-suffix stripped, see
+    /// `crate::config::canonical_address`). The most recent `from_name`
+    /// wins per contact; outbound recipients have no display-name
+    /// source (we only see the raw address the user typed) so their
+    /// `name` stays `None` until they reply.
+    ///
+    /// No caching here — the client side caches in IndexedDB. Volume
+    /// is small (low-thousands of messages per user in practice) so a
+    /// full scan per call is fine. If this ever becomes a bottleneck,
+    /// add a maintained `contacts` table updated on each insert.
+    async fn list_contacts(&self) -> Result<Response> {
+        #[derive(Deserialize)]
+        struct MsgRow {
+            from_addr: String,
+            from_name: Option<String>,
+            to_addrs: String,
+            cc_addrs: Option<String>,
+            bcc_addrs: Option<String>,
+            direction: String,
+            sent_at: i64,
+        }
+        // Sort DESC so the first time we see a contact is from their
+        // most recent message — lets us capture the freshest display
+        // name without an extra pass.
+        let rows: Vec<MsgRow> = self
+            .sql()
+            .exec(
+                "SELECT from_addr, from_name, to_addrs, cc_addrs, bcc_addrs,
+                        direction, sent_at
+                 FROM messages
+                 ORDER BY sent_at DESC",
+                None,
+            )?
+            .to_array()?;
+
+        use std::collections::HashMap;
+        let mut by_addr: HashMap<String, api_types::ContactView> = HashMap::new();
+        let parse_arr = |s: &str| -> Vec<String> {
+            serde_json::from_str::<Vec<String>>(s).unwrap_or_default()
+        };
+        let bump = |map: &mut HashMap<String, api_types::ContactView>,
+                        raw: &str,
+                        name: Option<&str>,
+                        sent_at: i64| {
+            let canon = crate::config::canonical_address(raw);
+            if canon.is_empty() || !canon.contains('@') {
+                return;
+            }
+            let clean_name = name
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(String::from);
+            let entry = map.entry(canon.clone()).or_insert(api_types::ContactView {
+                addr: canon,
+                name: clean_name.clone(),
+                last_seen_at: sent_at,
+                message_count: 0,
+            });
+            // Rows iterate newest-first, so the FIRST insert above
+            // already captured the freshest name. Subsequent encounters
+            // only fill in `name` if we haven't seen one yet.
+            if entry.name.is_none() && clean_name.is_some() {
+                entry.name = clean_name;
+            }
+            entry.message_count += 1;
+        };
+        for r in rows {
+            if r.direction == "in" {
+                bump(&mut by_addr, &r.from_addr, r.from_name.as_deref(), r.sent_at);
+            } else {
+                for addr in parse_arr(&r.to_addrs) {
+                    bump(&mut by_addr, &addr, None, r.sent_at);
+                }
+                if let Some(cc) = &r.cc_addrs {
+                    for addr in parse_arr(cc) {
+                        bump(&mut by_addr, &addr, None, r.sent_at);
+                    }
+                }
+                if let Some(bcc) = &r.bcc_addrs {
+                    for addr in parse_arr(bcc) {
+                        bump(&mut by_addr, &addr, None, r.sent_at);
+                    }
+                }
+            }
+        }
+        let mut out: Vec<api_types::ContactView> = by_addr.into_values().collect();
+        out.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
+        Response::from_json(&out)
     }
 
     async fn list_drafts(&self) -> Result<Response> {

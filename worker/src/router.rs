@@ -51,6 +51,7 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
         ("GET", "/api/me") => api::me::get(req, &env, &cfg).await,
         ("PATCH", "/api/me") => api::me::patch(req, &env, &cfg).await,
         ("GET", "/api/me/addresses") => api::me::list_addresses(req, &env, &cfg).await,
+        ("GET", "/api/me/contacts") => api::me::list_contacts(req, &env, &cfg).await,
 
         ("GET", "/api/threads") => api::mail::list_threads(req, &env, &cfg).await,
         ("GET", p) if p.starts_with("/api/threads/") => api::mail::get_thread(req, &env, &cfg).await,

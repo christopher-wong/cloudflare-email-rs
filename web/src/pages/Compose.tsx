@@ -9,6 +9,8 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import Toolbar from '@/components/Toolbar';
+import RecipientField, { type Recipient } from '@/components/RecipientField';
+import { invalidateContacts } from '@/lib/contacts';
 import * as api from '@/lib/api';
 import { useApp } from '@/lib/store';
 import { b64uDecode, b64uEncode, sealToSelf, utf8 } from '@/lib/crypto';
@@ -74,9 +76,15 @@ export default function Compose() {
 
   const myAddresses = state.me?.addresses ?? [];
   const [from, setFrom] = useState(myAddresses[0] ?? '');
-  const [to, setTo] = useState((rs.to ?? []).join(', '));
-  const [cc, setCc] = useState('');
-  const [bcc, setBcc] = useState('');
+  // to/cc/bcc are tag-style: each entry has the raw address plus an
+  // optional display name (populated from the contact list when the
+  // user picks a suggestion). Send/serialization uses `addr`; the
+  // `name` is purely UI.
+  const [to, setTo] = useState<Recipient[]>(
+    () => (rs.to ?? []).map((a) => ({ addr: a })),
+  );
+  const [cc, setCc] = useState<Recipient[]>([]);
+  const [bcc, setBcc] = useState<Recipient[]>([]);
   const [subject, setSubject] = useState(rs.subject ?? '');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
@@ -186,9 +194,9 @@ export default function Compose() {
         const payload = {
           id: draftId,
           in_reply_to_message_id: rs.replyToMessageId ?? null,
-          to_addrs: splitAddrs(to),
-          cc_addrs: splitAddrs(cc),
-          bcc_addrs: splitAddrs(bcc),
+          to_addrs: to.map((r) => r.addr),
+          cc_addrs: cc.map((r) => r.addr),
+          bcc_addrs: bcc.map((r) => r.addr),
           subject_ct_b64: subject ? b64uEncode(sealToSelf(utf8(subject), myPub)) : null,
           body_ct_b64: body ? b64uEncode(sealToSelf(utf8(body), myPub)) : null,
           attachments: [],
@@ -408,7 +416,7 @@ export default function Compose() {
       const html = body.trim().length > 0 ? body : null;
       const text = html ? htmlToPlainText(html) : '';
 
-      const recipients = splitAddrs(to);
+      const recipients = to.map((r) => r.addr);
       let bodyText = text;
       let bodyHtml = html;
 
@@ -427,7 +435,11 @@ export default function Compose() {
         const senderWrap = myPub ? b64uEncode(sealToSelf(cek, myPub)) : undefined;
         const created = await hosted.createHostedLink({
           files: hostedAttachments.map((a) => a.prepared),
-          recipient_addrs: [...recipients, ...splitAddrs(cc), ...splitAddrs(bcc)],
+          recipient_addrs: [
+            ...recipients,
+            ...cc.map((r) => r.addr),
+            ...bcc.map((r) => r.addr),
+          ],
           subject: subject || null,
           sender_cek_wrap_b64: senderWrap,
         });
@@ -551,8 +563,8 @@ export default function Compose() {
           from,
           from_name: state.me?.display_name || null,
           to: recipients,
-          cc: splitAddrs(cc),
-          bcc: splitAddrs(bcc),
+          cc: cc.map((r) => r.addr),
+          bcc: bcc.map((r) => r.addr),
           subject: subject || '(secret message)',
           text: linkText,
           html: linkHtml,
@@ -571,8 +583,8 @@ export default function Compose() {
         from,
         from_name: state.me?.display_name || null,
         to: recipients,
-        cc: splitAddrs(cc),
-        bcc: splitAddrs(bcc),
+        cc: cc.map((r) => r.addr),
+        bcc: bcc.map((r) => r.addr),
         subject,
         text: bodyText,
         html: bodyHtml,
@@ -585,6 +597,9 @@ export default function Compose() {
           mime: a.mime,
         })),
       });
+      // Invalidate the contact cache so the next typeahead reflects
+      // this send (any new recipient is now a known contact).
+      void invalidateContacts();
       if (draftId) {
         try { await api.del(`/api/drafts/${draftId}`); } catch {}
       }
@@ -635,32 +650,27 @@ export default function Compose() {
             ))}
           </select>
         </div>
-        <div className="field">
-          <div className="field-label">to</div>
-          <input
-            className="field-value w-full border-0"
-            placeholder="someone@example.com"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            required
-          />
-        </div>
-        <div className="field">
-          <div className="field-label">cc</div>
-          <input
-            className="field-value w-full border-0"
-            value={cc}
-            onChange={(e) => setCc(e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <div className="field-label">bcc</div>
-          <input
-            className="field-value w-full border-0"
-            value={bcc}
-            onChange={(e) => setBcc(e.target.value)}
-          />
-        </div>
+        <RecipientField
+          label="to"
+          value={to}
+          onChange={setTo}
+          required
+          placeholder="someone@example.com"
+          myAddresses={myAddresses}
+        />
+        <RecipientField
+          label="cc"
+          value={cc}
+          onChange={setCc}
+          myAddresses={myAddresses}
+        />
+        <RecipientField
+          label="bcc"
+          value={bcc}
+          onChange={setBcc}
+          myAddresses={myAddresses}
+          autocomplete={false}
+        />
         <div className="field">
           <div className="field-label">subject</div>
           <input
@@ -947,12 +957,8 @@ function formatBytesShort(n: number): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function splitAddrs(s: string): string[] {
-  return s
-    .split(/[,;]/)
-    .map((x) => x.trim())
-    .filter(Boolean);
-}
+// `splitAddrs` retired — the to/cc/bcc inputs are now tag-based via
+// RecipientField, which manages parsing + dedup internally.
 
 function formatMiB(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`;

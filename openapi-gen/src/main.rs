@@ -40,6 +40,7 @@ use schemas as s;
         p::get_me,
         p::patch_me,
         p::list_addresses,
+        p::list_contacts,
         p::passkeys_list,
         p::passkeys_add_options,
         p::passkeys_add_verify,
@@ -194,6 +195,7 @@ use schemas as s;
         s::AddAddressReq,
         s::AdminStatusResp,
         s::PublicConfig,
+        s::ContactView,
     )),
     tags(
         (name = "auth", description = "Bootstrap + WebAuthn ceremonies + session lifecycle."),

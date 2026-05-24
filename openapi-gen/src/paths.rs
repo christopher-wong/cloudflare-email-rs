@@ -153,6 +153,18 @@ pub fn list_addresses() {}
 
 #[utoipa::path(
     get,
+    path = "/api/me/contacts",
+    tag = "me",
+    description = "Derived contact list — every person the user has emailed or received from, deduped by canonical address, sorted by most recent interaction. Backs the to/cc/bcc autocomplete in Compose.",
+    responses(
+        (status = 200, body = Vec<ContactView>),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn list_contacts() {}
+
+#[utoipa::path(
+    get,
     path = "/api/me/passkeys",
     tag = "passkeys",
     description = "List passkey credentials registered to the current user.",

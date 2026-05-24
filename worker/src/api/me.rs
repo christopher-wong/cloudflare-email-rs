@@ -47,6 +47,15 @@ pub async fn list_addresses(
     super::json_ok(&addrs)
 }
 
+/// Derived contact list for the authenticated user — the source data
+/// for to/cc/bcc autocomplete in Compose. Proxies to MailboxDO which
+/// scans the user's messages and dedupes by canonical address.
+pub async fn list_contacts(req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<Response> {
+    let s = require_auth(&req, env).await?;
+    let stub = super::mailbox_stub(env, &s.user_id)?;
+    super::stub_passthrough(&stub, Method::Get, "/contacts", None).await
+}
+
 async fn body_bytes(req: &mut HttpRequest) -> ApiResult<Vec<u8>> {
     use http_body_util::BodyExt;
     let body = std::mem::replace(req.body_mut(), worker::Body::empty());

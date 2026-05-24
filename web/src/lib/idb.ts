@@ -17,12 +17,16 @@
  */
 
 const DB_NAME = 'cfemail';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_AUTH = 'auth';
 /** Per-draft transient state — currently just the hosted-attachment
  *  CEK + uploaded file manifest. Keyed by client-generated draft id.
  *  Cleared on successful send (or explicit draft delete). */
 const STORE_DRAFT_HOSTED = 'draft_hosted';
+/** Cached derived contact list. One row per cache, keyed by `'list'`
+ *  — the underlying API call is per-user (session cookie) so we don't
+ *  need a user-id key. Refreshed by `lib/contacts.ts`. */
+const STORE_CONTACTS = 'contacts';
 
 export interface CachedWrap {
   /** base64url ciphertext of the wrap (AES-GCM(wrap_key, priv)). */
@@ -53,6 +57,9 @@ function open(): Promise<IDBDatabase> | null {
       }
       if (!db.objectStoreNames.contains(STORE_DRAFT_HOSTED)) {
         db.createObjectStore(STORE_DRAFT_HOSTED);
+      }
+      if (!db.objectStoreNames.contains(STORE_CONTACTS)) {
+        db.createObjectStore(STORE_CONTACTS);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -154,6 +161,57 @@ export async function deleteDraftHosted(draftId: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_DRAFT_HOSTED, 'readwrite');
     tx.objectStore(STORE_DRAFT_HOSTED).delete(draftId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ---- contacts cache ----
+//
+// `lib/contacts.ts` owns the policy (TTL, invalidation); this module
+// just provides typed get/put/delete on a single keyed slot.
+
+export interface CachedContacts {
+  fetched_at: number;
+  /** Anything JSON-serializable; lib/contacts.ts narrows it to
+   *  ContactView[] from the generated OpenAPI types. */
+  contacts: unknown[];
+}
+
+const KEY_CONTACTS = 'list';
+
+export async function putCachedContacts(c: CachedContacts): Promise<void> {
+  const dbp = open();
+  if (!dbp) return;
+  const db = await dbp;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_CONTACTS, 'readwrite');
+    tx.objectStore(STORE_CONTACTS).put(c, KEY_CONTACTS);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function getCachedContacts(): Promise<CachedContacts | null> {
+  const dbp = open();
+  if (!dbp) return null;
+  const db = await dbp;
+  return new Promise<CachedContacts | null>((resolve, reject) => {
+    const tx = db.transaction(STORE_CONTACTS, 'readonly');
+    const req = tx.objectStore(STORE_CONTACTS).get(KEY_CONTACTS);
+    req.onsuccess = () =>
+      resolve((req.result as CachedContacts | undefined) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function clearCachedContacts(): Promise<void> {
+  const dbp = open();
+  if (!dbp) return;
+  const db = await dbp;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_CONTACTS, 'readwrite');
+    tx.objectStore(STORE_CONTACTS).delete(KEY_CONTACTS);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

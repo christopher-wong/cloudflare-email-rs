@@ -175,6 +175,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Derived contact list — every person the user has emailed or received from, deduped by canonical address, sorted by most recent interaction. Backs the to/cc/bcc autocomplete in Compose. */
+        get: operations["list_contacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/passkeys": {
         parameters: {
             query?: never;
@@ -953,6 +970,38 @@ export interface components {
         BootstrapResp: {
             invite_token: string;
             enroll_url: string;
+        };
+        /**
+         * @description One row in the authenticated user's derived contact list.
+         *
+         *     Derived (not stored): we scan the user's MailboxDO messages on each
+         *     `/api/contacts` call and dedupe by canonical email address. There is
+         *     no separate contacts table — the source of truth is the message log.
+         *     The client caches the result in IndexedDB with a short TTL and
+         *     invalidates on send.
+         */
+        ContactView: {
+            /** @description Canonical email address (plus-suffix stripped, lowercased). */
+            addr: string;
+            /**
+             * @description Most recent display name we've seen for this address, if any.
+             *     Comes from `from_name` on inbound messages; outbound recipients
+             *     have no name source (we only get raw addresses there) so it's
+             *     `None` until they reply.
+             */
+            name?: string | null;
+            /**
+             * Format: int64
+             * @description `sent_at` of the most recent message touching this contact.
+             */
+            last_seen_at: number;
+            /**
+             * Format: int64
+             * @description Total number of messages (inbound + outbound) involving this
+             *     contact. Used by the typeahead to break ties when scoring
+             *     suggestions.
+             */
+            message_count: number;
         };
         CreateInviteReq: {
             handle?: string | null;
@@ -1828,6 +1877,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": string[];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_contacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactView"][];
                 };
             };
             401: {
