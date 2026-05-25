@@ -26,13 +26,12 @@ function hash(s: string): number {
 function initials(s: string): string {
   const trimmed = s.trim();
   if (!trimmed) return '·';
-  // Strip the domain so the disc shows the local-part initial. For multi-word
-  // human names (no @), take the first letter of the first two words.
-  const local = trimmed.split('@')[0];
-  const words = local.replace(/[._\-+]/g, ' ').split(/\s+/).filter(Boolean);
-  if (words.length === 0) return '·';
-  if (words.length === 1) return words[0][0]!.toUpperCase();
-  return (words[0][0]! + words[1][0]!).toUpperCase();
+  // Use the first character of the local-part (or first word for plain
+  // names). Single-glyph by design so the disc font sizing stays correct
+  // at every size and addresses with separators (christopher.wong@,
+  // alice+work@) don't render two glyphs that overflow the disc clip.
+  const first = trimmed[0]!;
+  return first.toUpperCase();
 }
 
 export default function Avatar({

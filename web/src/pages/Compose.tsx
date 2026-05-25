@@ -752,9 +752,18 @@ export default function Compose() {
           <button
             type="button"
             className="btn"
+            /* Share the Send button's busy gate so Save can't fire while
+               Send is in flight and vice-versa. Skip persistence entirely
+               when the form is empty so clicking Save on a fresh compose
+               doesn't create a zombie '(no subject)' draft row. */
             disabled={busy}
             onClick={async () => {
               if (!myPub) return;
+              if (!subject && !body && to.length === 0 && cc.length === 0 && bcc.length === 0) {
+                nav('/drafts');
+                return;
+              }
+              setBusy(true);
               try {
                 const payload = {
                   id: draftId,
@@ -772,6 +781,8 @@ export default function Compose() {
                 nav('/drafts');
               } catch (e: any) {
                 setErr(e?.message || 'save failed');
+              } finally {
+                setBusy(false);
               }
             }}
           >

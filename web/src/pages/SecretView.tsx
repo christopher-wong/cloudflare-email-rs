@@ -10,7 +10,7 @@
  * The server never sees the password or any plaintext.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
 import * as api from '@/lib/api';
@@ -90,6 +90,14 @@ export default function SecretView() {
   const [passwordCheck, setPasswordCheck] = useState<Uint8Array | null>(null);
   const [attState, setAttState] = useState<Record<string, AttState>>({});
 
+  // Mirror `attState` into a ref so the unmount cleanup can revoke every
+  // Blob URL — including ones added after the effect was set up. The
+  // cleanup runs only on unmount; without the ref, its closure captures
+  // the initial empty `attState` and decrypted plaintext stays pinned in
+  // the Blob store. This is a privacy regression for an e2e product.
+  const attStateRef = useRef(attState);
+  attStateRef.current = attState;
+
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
@@ -108,11 +116,10 @@ export default function SecretView() {
 
   useEffect(() => {
     return () => {
-      for (const s of Object.values(attState)) {
+      for (const s of Object.values(attStateRef.current)) {
         if (s.kind === 'ready') URL.revokeObjectURL(s.url);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const tryOpen = async () => {

@@ -14,6 +14,19 @@ import { relativeDate } from '@/lib/time';
 import { useApp } from '@/lib/store';
 import { isEditableTarget, hasMod } from '@/lib/shortcuts';
 
+// Mirrors Labels.tsx — keep these in sync. Hashes a label name to one of
+// the system's swatches so the inbox filter chip and the canonical Labels
+// page show the same dot color.
+const LABEL_SWATCHES = [
+  '#5C7A6B', '#7E6B5A', '#6B6A8C', '#8A6B7A', '#555558',
+  '#6B7E8C', '#8C7E5A', '#B43A3A', '#C9A12B',
+];
+function labelColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return LABEL_SWATCHES[h % LABEL_SWATCHES.length];
+}
+
 export default function Inbox() {
   const [threads, setThreads] = useState<api.ThreadRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -198,76 +211,88 @@ export default function Inbox() {
     <div className="flex h-full flex-col">
       <Toolbar
         right={
-          selected.size > 0 ? (
-            <>
-              <span className="text-[12.5px] text-ink-muted">{selected.size} selected</span>
+          /* Search input + filter chips stay mounted regardless of bulk
+             selection state — unmounting them would strand the user with
+             an active-but-invisible query and break the '/' shortcut. */
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className={`chip ${labelFilter === '' && !query ? 'chip-active' : ''}`}
+              onClick={() => { setLabelFilter(''); setQuery(''); }}
+            >
+              All
+            </button>
+            {labels.map((l) => (
               <button
+                key={l.id}
                 type="button"
-                className="btn btn-sm btn-danger"
-                onClick={() => void bulkDelete()}
+                className={`chip ${labelFilter === l.id ? 'chip-active' : ''}`}
+                onClick={() => setLabelFilter(labelFilter === l.id ? '' : l.id)}
               >
-                Delete
+                <span className="dot" style={{ background: labelColor(l.name) }} />
+                {l.name}
               </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-ghost"
-                onClick={() => setSelected(new Set())}
-              >
-                Clear
-              </button>
-            </>
-          ) : (
-            <div className="flex items-center gap-2">
-              {/* Filter chips */}
-              <button
-                type="button"
-                className={`chip ${labelFilter === '' && !query ? 'chip-active' : ''}`}
-                onClick={() => { setLabelFilter(''); setQuery(''); }}
-              >
-                All
-              </button>
-              {labels.map((l) => (
-                <button
-                  key={l.id}
-                  type="button"
-                  className={`chip ${labelFilter === l.id ? 'chip-active' : ''}`}
-                  onClick={() => setLabelFilter(labelFilter === l.id ? '' : l.id)}
-                >
-                  <span className="dot" style={{ background: '#5C7A6B' }} />
-                  {l.name}
-                </button>
-              ))}
-              {/* Search input */}
-              <div className="relative">
-                <input
-                  ref={searchRef}
-                  type="search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search mail…"
-                  className="h-7 w-48 rounded-sm border border-border bg-elev px-3 text-[12.5px] text-ink placeholder:text-ink-faint outline-none transition-[border-color,box-shadow] duration-[120ms] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]"
-                  aria-label="Search inbox"
-                />
-              </div>
+            ))}
+            <div className="relative">
+              <input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search mail…"
+                className="h-7 w-48 rounded-sm border border-border bg-elev px-3 text-[12.5px] text-ink placeholder:text-ink-faint outline-none transition-[border-color,box-shadow] duration-[120ms] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]"
+                aria-label="Search inbox"
+              />
             </div>
-          )
+          </div>
         }
       >
-        <div className="flex items-baseline gap-2">
-          <span className="text-[15px] font-semibold text-ink">Inbox</span>
-          {threadCount > 0 && (
-            <span className="tnum text-[12px] text-ink-faint">{threadCount} conversation{threadCount === 1 ? '' : 's'}</span>
-          )}
-        </div>
+        {selected.size > 0 ? (
+          /* Bulk-select takes over the title slot, NOT the controls slot,
+             so search/filter remain usable while a selection is active. */
+          <div className="flex items-center gap-3">
+            <span className="text-[13.5px] font-semibold text-ink">{selected.size} selected</span>
+            <button
+              type="button"
+              className="btn btn-sm btn-danger"
+              onClick={() => void bulkDelete()}
+            >
+              Delete
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => setSelected(new Set())}
+            >
+              Clear
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-baseline gap-2">
+            <span className="text-[15px] font-semibold text-ink">Inbox</span>
+            {threadCount > 0 && (
+              <span className="tnum text-[12px] text-ink-faint">{threadCount} conversation{threadCount === 1 ? '' : 's'}</span>
+            )}
+          </div>
+        )}
       </Toolbar>
 
       {threads === null && !err && <Loader />}
       {err && <EmptyState title={err} />}
-      {threads && threads.length === 0 && !query && (
+      {/* Truly empty inbox: no threads at all AND no filter/query active.
+          The !labelFilter / !query guards prevent this card from rendering
+          on top of the "no matches" card below when a filter is set. */}
+      {threads && threads.length === 0 && !query && !labelFilter && (
         <EmptyState title="No conversations" hint="Emails routed to your address will appear here." />
       )}
-      {threads && filteredThreads?.length === 0 && (query || labelFilter) && (
-        <EmptyState title="No conversations" hint="Try clearing the filter." />
+      {threads && threads.length > 0 && filteredThreads?.length === 0 && (
+        <EmptyState
+          title={query ? 'No matches' : 'No conversations'}
+          hint={query ? <>Nothing in your inbox matches “{query}”.</> : 'Try clearing the filter.'}
+        />
+      )}
+      {threads && threads.length === 0 && (query || labelFilter) && (
+        <EmptyState title="No conversations" hint="No threads match this filter." />
       )}
 
       {threads && filteredThreads && filteredThreads.length > 0 && (

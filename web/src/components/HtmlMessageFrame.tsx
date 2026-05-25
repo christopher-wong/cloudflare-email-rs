@@ -55,7 +55,12 @@ export default function HtmlMessageFrame({
 }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState(initialHeight);
-  const [loaded, setLoaded] = useState(false);
+  // `measured` flips true after the iframe's first real layout reports a
+  // non-zero scrollHeight. Used only to hide the loading shimmer overlay.
+  // We deliberately do NOT use it to set display:none on the iframe — that
+  // would make scrollHeight read 0 inside the onLoad handler and trap
+  // height at initialHeight until ResizeObserver caught up.
+  const [measured, setMeasured] = useState(false);
 
   // Build the doc string once per (html, loadImages) pair. We:
   //   1. Sanitize the raw email HTML.
@@ -131,7 +136,10 @@ export default function HtmlMessageFrame({
         padding: 0;
       }
       body {
-        font-family: 'Geist', -apple-system, ui-sans-serif, system-ui, sans-serif;
+        /* System font stack: srcDoc iframes don't inherit @font-face from
+           the parent doc, so requesting 'Geist' here silently falls back.
+           Use a neutral sans that renders well across OSes instead. */
+        font-family: -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
         font-size: 14px;
         line-height: 1.65;
         color: #181816;
@@ -167,7 +175,7 @@ export default function HtmlMessageFrame({
         color: #6B6B66;
       }
       pre, code {
-        font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 0.88em;
         background: #F4F2EC;
         border-radius: 4px;
@@ -190,13 +198,19 @@ export default function HtmlMessageFrame({
     return '<!doctype html>' + doc.documentElement.outerHTML;
   }, [html, loadImages]);
 
+  // Reset the shimmer when the doc rebuilds (e.g. "show images" toggle).
+  // Without this the placeholder only renders on the first load and stale
+  // content stays painted while the new srcDoc reloads.
+  useEffect(() => {
+    setMeasured(false);
+  }, [decorated]);
+
   // Parent-side height measurement.
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
     let cleanup: (() => void) | null = null;
     const onLoad = () => {
-      setLoaded(true);
       const doc = iframe.contentDocument;
       if (!doc) return;
       const measure = () => {
@@ -204,7 +218,10 @@ export default function HtmlMessageFrame({
           doc.documentElement.scrollHeight || 0,
           doc.body?.scrollHeight || 0,
         );
-        if (h > 0) setHeight(Math.min(h + 4, 100_000));
+        if (h > 0) {
+          setHeight(Math.min(h + 4, 100_000));
+          setMeasured(true);
+        }
       };
       measure();
       const ro = new ResizeObserver(measure);
@@ -230,17 +247,12 @@ export default function HtmlMessageFrame({
     };
   }, [decorated]);
 
+  // Iframe is always rendered with display:block — hiding it would force
+  // contentDocument.body.scrollHeight to 0 inside onLoad and the measure()
+  // guard would skip setHeight, trapping height at initialHeight until the
+  // ResizeObserver caught up. We overlay the shimmer on top instead.
   return (
-    <div className="card overflow-hidden">
-      {/* Loading shimmer — shown until the iframe reports loaded */}
-      {!loaded && (
-        <div className="space-y-2 p-4">
-          <div className="h-3 w-3/4 animate-pulse-soft rounded bg-sunken" />
-          <div className="h-3 w-full animate-pulse-soft rounded bg-sunken" />
-          <div className="h-3 w-5/6 animate-pulse-soft rounded bg-sunken" />
-          <div className="h-3 w-2/3 animate-pulse-soft rounded bg-sunken" />
-        </div>
-      )}
+    <div className="card relative overflow-hidden">
       <iframe
         ref={iframeRef}
         title="email"
@@ -248,13 +260,21 @@ export default function HtmlMessageFrame({
         referrerPolicy="no-referrer"
         srcDoc={decorated}
         style={{
-          display: loaded ? 'block' : 'none',
+          display: 'block',
           width: '100%',
           height: `${height}px`,
           border: 0,
           background: 'white',
         }}
       />
+      {!measured && (
+        <div className="absolute inset-x-0 top-0 space-y-2 bg-elev p-4">
+          <div className="h-3 w-3/4 animate-pulse-soft rounded bg-sunken" />
+          <div className="h-3 w-full animate-pulse-soft rounded bg-sunken" />
+          <div className="h-3 w-5/6 animate-pulse-soft rounded bg-sunken" />
+          <div className="h-3 w-2/3 animate-pulse-soft rounded bg-sunken" />
+        </div>
+      )}
     </div>
   );
 }

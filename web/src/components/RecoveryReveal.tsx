@@ -41,7 +41,7 @@ export default function RecoveryReveal({
   };
 
   return (
-    <div className="card shadow-pop animate-in fade-in zoom-in-95 duration-150">
+    <div className="card shadow-pop animate-zoom-in">
       {/* Card head */}
       <div className="card-head">
         <div className="flex-1">

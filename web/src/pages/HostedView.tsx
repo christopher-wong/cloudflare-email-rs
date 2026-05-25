@@ -17,7 +17,7 @@
  * decrypt of multi-GB files we'd need a service worker (follow-up).
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 
 import * as api from '@/lib/api';
@@ -97,6 +97,14 @@ export default function HostedView() {
   const [err, setErr] = useState<string | null>(null);
   const [fileStates, setFileStates] = useState<Record<string, FileState>>({});
 
+  // Mirror `fileStates` into a ref so the unmount cleanup can read the
+  // latest snapshot. The cleanup effect is unmount-only (`[]` deps), so
+  // reading `fileStates` directly there captures the initial `{}` and
+  // leaks every decrypted Blob URL. The ref + unmount cleanup pattern
+  // avoids re-running cleanup on every state change.
+  const fileStatesRef = useRef(fileStates);
+  fileStatesRef.current = fileStates;
+
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
@@ -115,11 +123,10 @@ export default function HostedView() {
 
   useEffect(() => {
     return () => {
-      for (const s of Object.values(fileStates)) {
+      for (const s of Object.values(fileStatesRef.current)) {
         if (s.kind === 'ready') URL.revokeObjectURL(s.url);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (err) {
