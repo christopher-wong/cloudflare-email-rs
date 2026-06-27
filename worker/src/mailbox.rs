@@ -52,6 +52,10 @@ impl DurableObject for MailboxDO {
             (Method::Post, "/attachments") => self.add_attachment(req).await,
             (Method::Get, "/attachments") => self.list_attachments(req).await,
             (Method::Delete, "/attachments") => self.delete_attachment(req).await,
+            (Method::Get, "/image-settings") => self.image_settings().await,
+            (Method::Post, "/image-settings/default") => self.set_image_default(req).await,
+            (Method::Post, "/image-settings/domains") => self.add_image_domain(req).await,
+            (Method::Delete, "/image-settings/domains") => self.remove_image_domain(req).await,
             (Method::Get, "/realtime") => self.realtime_upgrade(req).await,
             (Method::Post, "/notify") => self.notify(req).await,
             (Method::Get, "/export") => self.export(req).await,
@@ -1005,6 +1009,73 @@ impl MailboxDO {
         Response::ok("{}")
     }
 
+    // MARK: - Remote-image settings
+
+    /// Read the current per-user image settings: the global default flag
+    /// (meta) plus the allowlisted sender domains.
+    fn read_image_settings(&self) -> Result<api_types::ImageSettings> {
+        let sql = self.sql();
+        let metas: Vec<MetaValueRow> = sql
+            .exec(
+                "SELECT COALESCE(value, '0') AS value FROM meta WHERE key = 'images_load_default'",
+                None,
+            )?
+            .to_array()?;
+        let load_by_default = metas.first().map(|m| m.value == "1").unwrap_or(false);
+        let domains: Vec<DomainRow> = sql
+            .exec("SELECT domain FROM image_domains ORDER BY domain ASC", None)?
+            .to_array()?;
+        Ok(api_types::ImageSettings {
+            load_by_default,
+            domains: domains.into_iter().map(|d| d.domain).collect(),
+        })
+    }
+
+    async fn image_settings(&self) -> Result<Response> {
+        Response::from_json(&self.read_image_settings()?)
+    }
+
+    async fn set_image_default(&self, mut req: Request) -> Result<Response> {
+        let body: api_types::SetImageDefaultReq = req.json().await?;
+        let v = if body.load_by_default { "1" } else { "0" };
+        self.sql().exec(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('images_load_default', ?)",
+            Some(vec![v.into()]),
+        )?;
+        Response::from_json(&self.read_image_settings()?)
+    }
+
+    async fn add_image_domain(&self, mut req: Request) -> Result<Response> {
+        let body: api_types::AddImageDomainReq = req.json().await?;
+        let domain = normalize_domain(&body.domain);
+        if domain.is_empty() {
+            return Response::error("invalid domain", 400);
+        }
+        self.sql().exec(
+            "INSERT OR IGNORE INTO image_domains (domain, created_at) VALUES (?, ?)",
+            Some(vec![domain.into(), now_ms().into()]),
+        )?;
+        Response::from_json(&self.read_image_settings()?)
+    }
+
+    async fn remove_image_domain(&self, req: Request) -> Result<Response> {
+        let url = req.url()?;
+        let raw = url
+            .query_pairs()
+            .find(|(k, _)| k == "domain")
+            .map(|(_, v)| v.to_string())
+            .ok_or_else(|| Error::RustError("domain required".into()))?;
+        let domain = normalize_domain(&raw);
+        if domain.is_empty() {
+            return Response::error("invalid domain", 400);
+        }
+        self.sql().exec(
+            "DELETE FROM image_domains WHERE domain = ?",
+            Some(vec![domain.into()]),
+        )?;
+        Response::from_json(&self.read_image_settings()?)
+    }
+
     async fn add_attachment(&self, mut req: Request) -> Result<Response> {
         let body: AddAttachmentReq = req.json().await?;
         let filename_ct = match &body.filename_ct_b64 {
@@ -1268,6 +1339,43 @@ struct DraftRow {
 
 #[derive(Deserialize)]
 struct CreateLabelReq { name: String }
+
+#[derive(Deserialize)]
+struct MetaValueRow {
+    value: String,
+}
+
+#[derive(Deserialize)]
+struct DomainRow {
+    domain: String,
+}
+
+// Request/response shapes for the image-settings endpoints live in the shared
+// `api_types` crate (single source of truth for the OpenAPI spec): the worker
+// uses `api_types::{ImageSettings, SetImageDefaultReq, AddImageDomainReq}`.
+
+/// Normalize a user-supplied sender domain for the image allowlist:
+/// lowercase, trim, strip any userinfo / scheme / path / port, and drop a
+/// leading `www.`. Returns "" when nothing usable remains.
+fn normalize_domain(raw: &str) -> String {
+    let mut s = raw.trim().to_ascii_lowercase();
+    if let Some(at) = s.rfind('@') {
+        s = s[at + 1..].to_string();
+    }
+    if let Some(scheme) = s.find("://") {
+        s = s[scheme + 3..].to_string();
+    }
+    if let Some(slash) = s.find('/') {
+        s = s[..slash].to_string();
+    }
+    if let Some(colon) = s.find(':') {
+        s = s[..colon].to_string();
+    }
+    if let Some(rest) = s.strip_prefix("www.") {
+        s = rest.to_string();
+    }
+    s.trim_matches('.').to_string()
+}
 #[derive(Serialize, Deserialize)]
 struct LabelRow { id: String, name: String, created_at: i64 }
 #[derive(Deserialize)]
@@ -1377,6 +1485,15 @@ const SCHEMA: &[&str] = &[
         created_at INTEGER NOT NULL
     )",
     "CREATE INDEX IF NOT EXISTS att_msg ON attachments(message_id)",
+    // Per-user allowlist of sender domains whose remote images may be
+    // loaded (always through the /api/img proxy). Empty by default —
+    // remote images stay blocked until the user opts a domain in. The
+    // global \"load all by default\" flag lives in meta under the key
+    // 'images_load_default'.
+    "CREATE TABLE IF NOT EXISTS image_domains (
+        domain TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL
+    )",
 ];
 
 fn now_ms() -> i64 {

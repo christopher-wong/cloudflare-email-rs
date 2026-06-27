@@ -53,6 +53,17 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
         ("GET", "/api/me/addresses") => api::me::list_addresses(req, &env, &cfg).await,
         ("GET", "/api/me/contacts") => api::me::list_contacts(req, &env, &cfg).await,
 
+        // Per-user remote-image settings: the global "load by default"
+        // flag plus the allowlist of sender domains the user trusts.
+        ("GET", "/api/me/image-settings") => api::image_settings::get(req, &env, &cfg).await,
+        ("PUT", "/api/me/image-settings") => api::image_settings::set_default(req, &env, &cfg).await,
+        ("POST", "/api/me/image-settings/domains") => {
+            api::image_settings::add_domain(req, &env, &cfg).await
+        }
+        ("DELETE", p) if p.starts_with("/api/me/image-settings/domains/") => {
+            api::image_settings::remove_domain(req, &env, &cfg).await
+        }
+
         // Image proxy for inbound HTML email. Auth'd; rewrites a
         // remote image URL through Cloudflare so the recipient's IP
         // never reaches the original sender (defeats tracking pixels).

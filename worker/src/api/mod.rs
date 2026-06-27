@@ -8,6 +8,7 @@ pub mod drafts;
 pub mod labels;
 pub mod mail;
 pub mod hosted;
+pub mod image_settings;
 pub mod img;
 pub mod me;
 pub mod misc;
