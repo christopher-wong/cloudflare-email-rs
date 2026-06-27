@@ -841,3 +841,24 @@ pub struct PublicConfig {
     pub app_host: String,
     pub app_name: String,
 }
+
+// ---- Remote-image settings -----------------------------------------------
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct ImageSettings {
+    /// Load remote images for every sender (always via the `/api/img` proxy,
+    /// so the sender never sees the recipient's IP).
+    pub load_by_default: bool,
+    /// Allowlisted sender domains whose remote images load automatically.
+    pub domains: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct SetImageDefaultReq {
+    pub load_by_default: bool,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct AddImageDomainReq {
+    pub domain: String,
+}

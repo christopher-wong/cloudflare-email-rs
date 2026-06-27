@@ -182,6 +182,61 @@ pub fn list_contacts() {}
 
 #[utoipa::path(
     get,
+    path = "/api/me/image-settings",
+    tag = "me",
+    description = "Read the user's remote-image settings: the global load-by-default flag and the allowlist of sender domains whose images load automatically.",
+    responses(
+        (status = 200, body = ImageSettings),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn get_image_settings() {}
+
+#[utoipa::path(
+    put,
+    path = "/api/me/image-settings",
+    tag = "me",
+    description = "Set whether remote images load by default for every sender (always via the /api/img proxy). Returns the updated settings.",
+    request_body = SetImageDefaultReq,
+    responses(
+        (status = 200, body = ImageSettings),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn set_image_settings() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/me/image-settings/domains",
+    tag = "me",
+    description = "Allowlist a sender domain so its remote images load automatically. Returns the updated settings.",
+    request_body = AddImageDomainReq,
+    responses(
+        (status = 200, body = ImageSettings),
+        (status = 400, description = "Empty or invalid domain.", body = ErrorResponse),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn add_image_domain() {}
+
+#[utoipa::path(
+    delete,
+    path = "/api/me/image-settings/domains/{domain}",
+    tag = "me",
+    description = "Remove a sender domain from the remote-image allowlist. Returns the updated settings.",
+    params(
+        ("domain" = String, Path, description = "Sender domain to remove."),
+    ),
+    responses(
+        (status = 200, body = ImageSettings),
+        (status = 400, description = "Empty or invalid domain.", body = ErrorResponse),
+        (status = 401, body = ErrorResponse),
+    ),
+)]
+pub fn remove_image_domain() {}
+
+#[utoipa::path(
+    get,
     path = "/api/me/passkeys",
     tag = "passkeys",
     description = "List passkey credentials registered to the current user.",

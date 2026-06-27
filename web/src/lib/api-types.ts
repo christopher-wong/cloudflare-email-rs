@@ -192,6 +192,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/image-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read the user's remote-image settings: the global load-by-default flag and the allowlist of sender domains whose images load automatically. */
+        get: operations["get_image_settings"];
+        /** @description Set whether remote images load by default for every sender (always via the /api/img proxy). Returns the updated settings. */
+        put: operations["set_image_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/image-settings/domains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Allowlist a sender domain so its remote images load automatically. Returns the updated settings. */
+        post: operations["add_image_domain"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/image-settings/domains/{domain}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description Remove a sender domain from the remote-image allowlist. Returns the updated settings. */
+        delete: operations["remove_image_domain"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/passkeys": {
         parameters: {
             query?: never;
@@ -910,6 +962,9 @@ export interface components {
             user_id: string;
             address: string;
         };
+        AddImageDomainReq: {
+            domain: string;
+        };
         AddPasskeyOptions: {
             rp: components["schemas"]["RpInfo"];
             user: components["schemas"]["PubKeyUser"];
@@ -1164,6 +1219,15 @@ export interface components {
              *     returned on /api/hosted/mine, never on the public view.
              */
             sender_cek_wrap_b64?: string | null;
+        };
+        ImageSettings: {
+            /**
+             * @description Load remote images for every sender (always via the `/api/img` proxy,
+             *     so the sender never sees the recipient's IP).
+             */
+            load_by_default: boolean;
+            /** @description Allowlisted sender domains whose remote images load automatically. */
+            domains: string[];
         };
         InviteView: {
             token: string;
@@ -1494,6 +1558,9 @@ export interface components {
         SendResp: {
             message_id: string;
             thread_id: string;
+        };
+        SetImageDefaultReq: {
+            load_by_default: boolean;
         };
         /**
          * @description Thread summary returned by `GET /api/threads`. The actual shape is owned
@@ -1928,6 +1995,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContactView"][];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_image_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageSettings"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    set_image_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetImageDefaultReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageSettings"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    add_image_domain: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddImageDomainReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageSettings"];
+                };
+            };
+            /** @description Empty or invalid domain. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    remove_image_domain: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sender domain to remove. */
+                domain: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageSettings"];
+                };
+            };
+            /** @description Empty or invalid domain. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             401: {

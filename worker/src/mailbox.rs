@@ -1013,7 +1013,7 @@ impl MailboxDO {
 
     /// Read the current per-user image settings: the global default flag
     /// (meta) plus the allowlisted sender domains.
-    fn read_image_settings(&self) -> Result<ImageSettingsResp> {
+    fn read_image_settings(&self) -> Result<api_types::ImageSettings> {
         let sql = self.sql();
         let metas: Vec<MetaValueRow> = sql
             .exec(
@@ -1025,7 +1025,7 @@ impl MailboxDO {
         let domains: Vec<DomainRow> = sql
             .exec("SELECT domain FROM image_domains ORDER BY domain ASC", None)?
             .to_array()?;
-        Ok(ImageSettingsResp {
+        Ok(api_types::ImageSettings {
             load_by_default,
             domains: domains.into_iter().map(|d| d.domain).collect(),
         })
@@ -1036,7 +1036,7 @@ impl MailboxDO {
     }
 
     async fn set_image_default(&self, mut req: Request) -> Result<Response> {
-        let body: SetImageDefaultReq = req.json().await?;
+        let body: api_types::SetImageDefaultReq = req.json().await?;
         let v = if body.load_by_default { "1" } else { "0" };
         self.sql().exec(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('images_load_default', ?)",
@@ -1046,7 +1046,7 @@ impl MailboxDO {
     }
 
     async fn add_image_domain(&self, mut req: Request) -> Result<Response> {
-        let body: ImageDomainReq = req.json().await?;
+        let body: api_types::AddImageDomainReq = req.json().await?;
         let domain = normalize_domain(&body.domain);
         if domain.is_empty() {
             return Response::error("invalid domain", 400);
@@ -1350,21 +1350,9 @@ struct DomainRow {
     domain: String,
 }
 
-#[derive(Deserialize)]
-struct SetImageDefaultReq {
-    load_by_default: bool,
-}
-
-#[derive(Deserialize)]
-struct ImageDomainReq {
-    domain: String,
-}
-
-#[derive(Serialize)]
-struct ImageSettingsResp {
-    load_by_default: bool,
-    domains: Vec<String>,
-}
+// Request/response shapes for the image-settings endpoints live in the shared
+// `api_types` crate (single source of truth for the OpenAPI spec): the worker
+// uses `api_types::{ImageSettings, SetImageDefaultReq, AddImageDomainReq}`.
 
 /// Normalize a user-supplied sender domain for the image allowlist:
 /// lowercase, trim, strip any userinfo / scheme / path / port, and drop a

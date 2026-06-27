@@ -445,6 +445,179 @@
         }
       }
     },
+    "/api/me/image-settings": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "description": "Read the user's remote-image settings: the global load-by-default flag and the allowlist of sender domains whose images load automatically.",
+        "operationId": "get_image_settings",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "me"
+        ],
+        "description": "Set whether remote images load by default for every sender (always via the /api/img proxy). Returns the updated settings.",
+        "operationId": "set_image_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetImageDefaultReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/image-settings/domains": {
+      "post": {
+        "tags": [
+          "me"
+        ],
+        "description": "Allowlist a sender domain so its remote images load automatically. Returns the updated settings.",
+        "operationId": "add_image_domain",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddImageDomainReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty or invalid domain.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/image-settings/domains/{domain}": {
+      "delete": {
+        "tags": [
+          "me"
+        ],
+        "description": "Remove a sender domain from the remote-image allowlist. Returns the updated settings.",
+        "operationId": "remove_image_domain",
+        "parameters": [
+          {
+            "name": "domain",
+            "in": "path",
+            "description": "Sender domain to remove.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty or invalid domain.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me/passkeys": {
       "get": {
         "tags": [
@@ -2835,6 +3008,17 @@
           }
         }
       },
+      "AddImageDomainReq": {
+        "type": "object",
+        "required": [
+          "domain"
+        ],
+        "properties": {
+          "domain": {
+            "type": "string"
+          }
+        }
+      },
       "AddPasskeyOptions": {
         "type": "object",
         "required": [
@@ -3686,6 +3870,26 @@
               "null"
             ],
             "description": "Sender-only — base64url of `seal_to(sender_pub, cek)`. Only\nreturned on /api/hosted/mine, never on the public view."
+          }
+        }
+      },
+      "ImageSettings": {
+        "type": "object",
+        "required": [
+          "load_by_default",
+          "domains"
+        ],
+        "properties": {
+          "load_by_default": {
+            "type": "boolean",
+            "description": "Load remote images for every sender (always via the `/api/img` proxy,\nso the sender never sees the recipient's IP)."
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Allowlisted sender domains whose remote images load automatically."
           }
         }
       },
@@ -4844,6 +5048,17 @@
           },
           "thread_id": {
             "type": "string"
+          }
+        }
+      },
+      "SetImageDefaultReq": {
+        "type": "object",
+        "required": [
+          "load_by_default"
+        ],
+        "properties": {
+          "load_by_default": {
+            "type": "boolean"
           }
         }
       },
