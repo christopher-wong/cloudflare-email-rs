@@ -72,6 +72,12 @@ impl DurableObject for RegistryDO {
             (Method::Post, "/hosted-downloads/revoke") => self.revoke_hosted_download(req).await,
             (Method::Post, "/hosted-downloads/purge") => self.purge_hosted_downloads(req).await,
             (Method::Get, "/hosted-downloads/referenced-keys") => self.hosted_downloads_referenced_keys().await,
+            (Method::Post, "/domains") => self.upsert_domain(req).await,
+            (Method::Get, "/domains") => self.list_domains().await,
+            (Method::Get, "/domains/by-name") => self.domain_by_name(req).await,
+            (Method::Get, "/domains/owns") => self.domain_owns(req).await,
+            (Method::Patch, "/domains") => self.update_domain(req).await,
+            (Method::Delete, "/domains") => self.delete_domain(req).await,
             _ => Response::error("not found", 404),
         }
     }
@@ -992,6 +998,203 @@ impl RegistryDO {
         Response::ok("{}")
     }
 
+    // ---- domains (multi-tenant onboarding) --------------------------------
+
+    /// Insert or replace a domain row. Used by the onboarding handler right
+    /// after it creates the Cloudflare zone. Re-onboarding the same domain
+    /// overwrites the prior row (new zone id / nameservers) rather than
+    /// erroring, so a half-finished onboarding can be retried.
+    async fn upsert_domain(&self, mut req: Request) -> Result<Response> {
+        let body: UpsertDomainReq = req.json().await?;
+        let domain = body.domain.trim().to_lowercase();
+        if domain.is_empty() {
+            return Response::error("domain required", 400);
+        }
+        let status = body.status.unwrap_or_else(|| "pending_ns".to_string());
+        let nameservers = body
+            .nameservers
+            .map(|ns| serde_json::to_string(&ns).unwrap_or_default());
+        let now = now_ms();
+        self.sql().exec(
+            "INSERT INTO domains (domain, cf_zone_id, status, nameservers, added_by, created_at, verified_at)
+             VALUES (?, ?, ?, ?, ?, ?, NULL)
+             ON CONFLICT(domain) DO UPDATE SET
+                cf_zone_id = excluded.cf_zone_id,
+                status = excluded.status,
+                nameservers = excluded.nameservers,
+                added_by = excluded.added_by",
+            Some(vec![
+                domain.clone().into(),
+                body.cf_zone_id.clone().into(),
+                status.into(),
+                nameservers.into(),
+                body.added_by.into(),
+                now.into(),
+            ]),
+        )?;
+        Response::from_json(&self.load_domain(&domain)?)
+    }
+
+    async fn list_domains(&self) -> Result<Response> {
+        #[derive(Deserialize)]
+        struct Row {
+            domain: String,
+            cf_zone_id: Option<String>,
+            status: String,
+            nameservers: Option<String>,
+            created_at: i64,
+            verified_at: Option<i64>,
+        }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec(
+                "SELECT domain, cf_zone_id, status, nameservers, created_at, verified_at
+                 FROM domains ORDER BY created_at DESC",
+                None,
+            )?
+            .to_array()?;
+        let out: Vec<DomainView> = rows
+            .into_iter()
+            .map(|r| DomainView {
+                domain: r.domain,
+                cf_zone_id: r.cf_zone_id,
+                status: r.status,
+                nameservers: r
+                    .nameservers
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or_default(),
+                created_at: r.created_at,
+                verified_at: r.verified_at,
+            })
+            .collect();
+        Response::from_json(&out)
+    }
+
+    async fn domain_by_name(&self, req: Request) -> Result<Response> {
+        let url = req.url()?;
+        let domain = url
+            .query_pairs()
+            .find(|(k, _)| k == "domain")
+            .map(|(_, v)| v.to_lowercase())
+            .ok_or_else(|| Error::RustError("domain required".into()))?;
+        match self.try_load_domain(&domain)? {
+            Some(d) => Response::from_json(&d),
+            None => Response::error("not found", 404),
+        }
+    }
+
+    /// Fast ownership check for the inbound path: is `domain` onboarded AND
+    /// active? Returns `{ "owned": bool }`. A `pending_ns`/`disabled` domain
+    /// is not owned — we don't accept mail until routing is live.
+    async fn domain_owns(&self, req: Request) -> Result<Response> {
+        let url = req.url()?;
+        let domain = url
+            .query_pairs()
+            .find(|(k, _)| k == "domain")
+            .map(|(_, v)| v.to_lowercase())
+            .ok_or_else(|| Error::RustError("domain required".into()))?;
+        #[derive(Deserialize)]
+        struct Row { status: String }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec(
+                "SELECT status FROM domains WHERE domain = ?",
+                Some(vec![domain.into()]),
+            )?
+            .to_array()?;
+        let owned = rows.first().map(|r| r.status == "active").unwrap_or(false);
+        Response::from_json(&serde_json::json!({ "owned": owned }))
+    }
+
+    /// Patch a domain's lifecycle fields. Used by the verify step to flip
+    /// `pending_ns` → `active` (stamping `verified_at`) and by an admin to
+    /// `disable` a domain.
+    async fn update_domain(&self, mut req: Request) -> Result<Response> {
+        let body: UpdateDomainReq = req.json().await?;
+        let domain = body.domain.trim().to_lowercase();
+        if self.try_load_domain(&domain)?.is_none() {
+            return Response::error("domain not found", 404);
+        }
+        if let Some(status) = body.status.as_deref() {
+            if !matches!(status, "pending_ns" | "active" | "disabled") {
+                return Response::error("invalid status", 400);
+            }
+            // Stamp verified_at the first time a domain goes active.
+            if status == "active" {
+                self.sql().exec(
+                    "UPDATE domains SET status = 'active',
+                        verified_at = COALESCE(verified_at, ?)
+                     WHERE domain = ?",
+                    Some(vec![now_ms().into(), domain.clone().into()]),
+                )?;
+            } else {
+                self.sql().exec(
+                    "UPDATE domains SET status = ? WHERE domain = ?",
+                    Some(vec![status.into(), domain.clone().into()]),
+                )?;
+            }
+        }
+        if let Some(zone) = body.cf_zone_id.as_deref() {
+            self.sql().exec(
+                "UPDATE domains SET cf_zone_id = ? WHERE domain = ?",
+                Some(vec![zone.into(), domain.clone().into()]),
+            )?;
+        }
+        Response::from_json(&self.load_domain(&domain)?)
+    }
+
+    async fn delete_domain(&self, req: Request) -> Result<Response> {
+        let url = req.url()?;
+        let domain = url
+            .query_pairs()
+            .find(|(k, _)| k == "domain")
+            .map(|(_, v)| v.to_lowercase())
+            .ok_or_else(|| Error::RustError("domain required".into()))?;
+        self.sql().exec(
+            "DELETE FROM domains WHERE domain = ?",
+            Some(vec![domain.into()]),
+        )?;
+        Response::ok("{}")
+    }
+
+    fn load_domain(&self, domain: &str) -> Result<DomainView> {
+        self.try_load_domain(domain)?
+            .ok_or_else(|| Error::RustError("domain not found".into()))
+    }
+
+    fn try_load_domain(&self, domain: &str) -> Result<Option<DomainView>> {
+        #[derive(Deserialize)]
+        struct Row {
+            domain: String,
+            cf_zone_id: Option<String>,
+            status: String,
+            nameservers: Option<String>,
+            created_at: i64,
+            verified_at: Option<i64>,
+        }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec(
+                "SELECT domain, cf_zone_id, status, nameservers, created_at, verified_at
+                 FROM domains WHERE domain = ?",
+                Some(vec![domain.into()]),
+            )?
+            .to_array()?;
+        Ok(rows.into_iter().next().map(|r| DomainView {
+            domain: r.domain,
+            cf_zone_id: r.cf_zone_id,
+            status: r.status,
+            nameservers: r
+                .nameservers
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default(),
+            created_at: r.created_at,
+            verified_at: r.verified_at,
+        }))
+    }
+
     // ---- secret links -----------------------------------------------------
 
     async fn create_secret_link(&self, mut req: Request) -> Result<Response> {
@@ -1656,6 +1859,8 @@ impl RegistryDO {
                     sender_cek_wrap
              FROM hosted_downloads",
             &["sender_cek_wrap"]));
+        // `domains` is text/int only (no BLOB columns) — dump_table is safe.
+        let domains = step!("domains", dump_table(&sql, "SELECT * FROM domains"));
         let dump = serde_json::json!({
             "users":            users,
             "credentials":      credentials,
@@ -1666,6 +1871,7 @@ impl RegistryDO {
             "challenges":       challenges,
             "secret_links":     secret_links,
             "hosted_downloads": hosted_downloads,
+            "domains":          domains,
         });
         Response::from_json(&dump)
     }
@@ -1710,6 +1916,9 @@ impl RegistryDO {
               "created_at", "expires_at", "download_count", "revoked",
               "sender_cek_wrap"],
             &["sender_cek_wrap"])?;
+        load_table(&sql, &body, "domains",
+            &["domain", "cf_zone_id", "status", "nameservers", "added_by", "created_at", "verified_at"],
+            &[])?;
         Response::ok("{}")
     }
 }
@@ -1845,6 +2054,30 @@ struct AddAddressReq { user_id: String, address: String }
 struct UpdateProfileReq { user_id: String, display_name: Option<String> }
 #[derive(Deserialize)]
 struct UpdateSignCountReq { credential_id_b64: String, sign_count: u32 }
+
+#[derive(Deserialize)]
+struct UpsertDomainReq {
+    domain: String,
+    cf_zone_id: Option<String>,
+    status: Option<String>,
+    nameservers: Option<Vec<String>>,
+    added_by: Option<String>,
+}
+#[derive(Deserialize)]
+struct UpdateDomainReq {
+    domain: String,
+    status: Option<String>,
+    cf_zone_id: Option<String>,
+}
+#[derive(Serialize)]
+struct DomainView {
+    domain: String,
+    cf_zone_id: Option<String>,
+    status: String,
+    nameservers: Vec<String>,
+    created_at: i64,
+    verified_at: Option<i64>,
+}
 
 #[derive(Deserialize)]
 struct CreateSecretLinkReq {
@@ -2174,6 +2407,30 @@ const SCHEMA: &[&str] = &[
     )",
     "CREATE INDEX IF NOT EXISTS hosted_downloads_user ON hosted_downloads(sender_user_id)",
     "CREATE INDEX IF NOT EXISTS hosted_downloads_expires ON hosted_downloads(expires_at)",
+
+    // Multi-tenant "bring your own domain" onboarding (Path A: each tenant
+    // domain is a full zone in OUR Cloudflare account, with a catch-all rule
+    // that routes inbound mail to this worker). One row per onboarded domain.
+    //
+    //   status = 'pending_ns' → zone created, waiting for the customer to
+    //                           repoint their registrar nameservers.
+    //          = 'active'     → nameservers verified + Email Routing wired.
+    //          = 'disabled'   → soft-removed; mail no longer accepted.
+    //
+    // `cf_zone_id` is the Cloudflare zone id (used to poll status + configure
+    // routing). `nameservers` is the JSON array we hand back to the customer.
+    // The domain is stored lowercased so it matches `canonical_address`'s
+    // right-hand side directly.
+    "CREATE TABLE IF NOT EXISTS domains (
+        domain TEXT PRIMARY KEY,
+        cf_zone_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending_ns',
+        nameservers TEXT,
+        added_by TEXT,
+        created_at INTEGER NOT NULL,
+        verified_at INTEGER
+    )",
+    "CREATE INDEX IF NOT EXISTS domains_status ON domains(status)",
 ];
 
 const MIGRATIONS: &[&str] = &[

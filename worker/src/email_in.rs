@@ -68,11 +68,17 @@ async fn handle_impl(
         header_message_id,
         raw_size,
     );
-    let recipients: Vec<String> = vec![raw_to.clone()]
-        .into_iter()
-        .map(|a| canonical_address(&a))
-        .filter(|a| cfg.owns_address(a))
-        .collect();
+    // Ownership is checked against BOTH the static config domains and the
+    // dynamic multi-tenant `domains` registry (active onboarded domains).
+    // Cloudflare invokes us once per envelope recipient, so this is almost
+    // always a single address; the loop stays defensive.
+    let mut recipients: Vec<String> = Vec::new();
+    for a in [raw_to.clone()] {
+        let canon = canonical_address(&a);
+        if crate::config::domain_is_owned(&env, &cfg, &canon).await {
+            recipients.push(canon);
+        }
+    }
     if recipients.is_empty() {
         // Not for us — let it drop. (We could `message.forward()` to a
         // configured catch-all, but for now drop is the safe default.)

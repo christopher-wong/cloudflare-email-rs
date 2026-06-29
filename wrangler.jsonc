@@ -29,7 +29,18 @@
 		// domain (e.g. mail.middleseat.vc serving christopher@middleseat.vc).
 		"APP_HOST": "mail.middleseat.vc",
 		"APP_NAME": "cfmail",
-		"SESSION_TTL_DAYS": "30"
+		"SESSION_TTL_DAYS": "30",
+		// Multi-tenant domain onboarding (bring-your-own Cloudflare domain).
+		// Tenant domains are added as full zones in THIS Cloudflare account,
+		// then Email Routing's catch-all is pointed at this worker. Requires:
+		//   - CF_ACCOUNT_ID (below): the account zones are created under.
+		//   - CF_EMAIL_WORKER_NAME (below): the deployed worker script the
+		//     catch-all rule targets — must match the top-level "name".
+		//   - CF_API_TOKEN: an account-scoped API token with Zone:Edit,
+		//     DNS:Edit, and Email Routing:Edit. Set it as a SECRET, never a
+		//     var:  `wrangler secret put CF_API_TOKEN`
+		"CF_ACCOUNT_ID": "",
+		"CF_EMAIL_WORKER_NAME": "cfemail"
 	},
 	"routes": [
 		{

@@ -16,9 +16,9 @@ pub async fn create_invite(
     let s = require_admin_session(&req, env).await?;
     let body: CreateInviteReq = serde_json::from_slice(&body_bytes(&mut req).await?)?;
     for a in &body.addresses {
-        if !cfg.owns_address(a) {
+        if !crate::config::domain_is_owned(env, cfg, a).await {
             return Err(ApiError::BadRequest(format!(
-                "address {} not on a configured domain",
+                "address {} not on a configured or onboarded domain",
                 a
             )));
         }
@@ -265,8 +265,10 @@ pub async fn add_address(
 ) -> ApiResult<Response> {
     let _ = require_admin_session(&req, env).await?;
     let body: AddAddrReq = serde_json::from_slice(&body_bytes(&mut req).await?)?;
-    if !cfg.owns_address(&body.address) {
-        return Err(ApiError::BadRequest("address not on configured domain".into()));
+    if !crate::config::domain_is_owned(env, cfg, &body.address).await {
+        return Err(ApiError::BadRequest(
+            "address not on a configured or onboarded domain".into(),
+        ));
     }
     stub_passthrough(
         &registry_stub(env)?,
