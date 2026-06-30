@@ -126,11 +126,13 @@ pub async fn send(mut req: HttpRequest, env: &Env, cfg: &AppConfig) -> ApiResult
     let s = require_auth(&req, env).await?;
     let body: SendReq = serde_json::from_slice(&body_bytes(&mut req).await?)?;
 
-    // Validate the sender owns the From address.
+    // Validate the sender owns the From address. Consults both the static
+    // config domains and the dynamic multi-tenant `domains` registry so a
+    // tenant can send from their onboarded domain.
     let from_canon = crate::config::canonical_address(&body.from);
-    if !cfg.owns_address(&from_canon) {
+    if !crate::config::domain_is_owned(env, cfg, &from_canon).await {
         return Err(ApiError::BadRequest(format!(
-            "from address {} not on a configured domain",
+            "from address {} not on a configured or onboarded domain",
             body.from
         )));
     }

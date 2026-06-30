@@ -13,6 +13,7 @@ use worker::*;
 
 mod b64;
 mod backup;
+mod cf_api;
 mod config;
 mod crypto;
 mod error;

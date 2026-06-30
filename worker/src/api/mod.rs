@@ -3,6 +3,7 @@
 
 pub mod admin;
 pub mod attachments;
+pub mod domains;
 pub mod auth;
 pub mod drafts;
 pub mod labels;

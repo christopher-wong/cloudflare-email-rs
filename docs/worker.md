@@ -68,15 +68,31 @@ Admin routes additionally call `require_admin_session` (which checks the `is_adm
 
 **File**: `worker/src/registry.rs`
 
-**Schema highlights** (see `const SCHEMA` around line 1705):
-- `users`, `credentials`, `key_wraps`, `addresses`, `sessions`, `invites`, `challenges`, `secret_links`
+**Schema highlights** (see `const SCHEMA` near the bottom of the file):
+- `users`, `credentials`, `key_wraps`, `addresses`, `sessions`, `invites`, `challenges`, `secret_links`, `hosted_downloads`, `domains`
 
 **Important tables**:
 - `key_wraps` — stores the AES-GCM wrapped X25519 private key. One row per passkey + exactly one recovery row (enforced by partial unique index).
 - `credentials` — stores the COSE public key and current `sign_count` (anti-cloning).
 - `secret_links` — password-protected external shares (the "outside user" feature).
+- `domains` — multi-tenant "bring your own domain" onboarding (one row per onboarded domain). See §3a.
 
 All methods are behind the `fetch(&self, req)` handler of the DO (standard workers-rs pattern — no `&mut self`).
+
+### 3a. Multi-tenant domain onboarding (`domains` table + `cf_api.rs`)
+
+**Goal**: let an admin onboard a customer's Cloudflare domain so the customer can bring their own domain and receive sealed mail through this same worker.
+
+**Architecture — "Path A" (the zone lives in OUR Cloudflare account)**. Cloudflare's Email Routing "send to a Worker" action only targets Workers in the *zone's own account*, so cross-account delivery into this worker is impossible. We therefore add each tenant domain as a **full zone in our account** and point its catch-all rule at this worker. All tenant zones share our account, so the single deployed worker is a valid catch-all target for every one of them.
+
+**The one unautomatable step**: Cloudflare assigns a nameserver pair bound to the account a zone lives in, so the customer must repoint their registrar nameservers at the pair we return from zone creation. Everything before and after that is scripted.
+
+**Components**:
+- `worker/src/cf_api.rs` — `CfClient` (account-scoped REST client). `create_zone` → `get_zone` (poll for `active`) → `provision_email` (add routing DNS + enable routing + catch-all→worker + DMARC). Also `normalize_domain()` (pure, unit-tested). Auth via `CF_API_TOKEN` secret + `CF_ACCOUNT_ID` / `CF_EMAIL_WORKER_NAME` vars.
+- `domains` table + DO endpoints in `registry.rs`: `POST/GET/PATCH/DELETE /domains`, `GET /domains/by-name`, `GET /domains/owns` (the fast inbound-path ownership check — only `status='active'` counts as owned).
+- `worker/src/api/domains.rs` — admin endpoints: `POST /api/admin/domains` (create zone → store `pending_ns`, return nameservers), `POST /api/admin/domains/{domain}/verify` (poll zone; if active, provision + flip to `active`; idempotent), `GET /api/admin/domains`, `DELETE /api/admin/domains/{domain}` (registry soft-remove; CF zone left intact).
+
+**INVARIANT**: inbound ownership is decided by `config::domain_is_owned(env, cfg, addr)`, which checks the static config domains first and then the `domains` registry (active only). A `pending_ns` domain does **not** accept mail. When you add a route, change the `domains` schema, or touch onboarding, update this section.
 
 ### MailboxDO (per-user mail store)
 
@@ -104,7 +120,7 @@ sequenceDiagram
     S->>C: raw MIME to user@owned.domain
     C->>W: ForwardableEmailMessage (one call per RCPT)
     W->>W: raw_bytes() + mail-parser parse
-    W->>W: canonical_address + cfg.owns_address() filter
+    W->>W: canonical_address + config::domain_is_owned() filter (static + domains registry)
     loop for each owned recipient
         W->>R: GET /users/by-address?address=...
         R-->>W: {id, pub_key_b64}

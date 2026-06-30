@@ -57,6 +57,39 @@ impl AppConfig {
     }
 }
 
+/// Ownership check that consults BOTH the static config domains
+/// (`PRIMARY_DOMAIN` / `ADDITIONAL_DOMAINS`) and the dynamic, multi-tenant
+/// `domains` registry table populated by domain onboarding.
+///
+/// The static list is checked first (cheap, no DO round-trip) so the operator's
+/// own domains never depend on the registry being reachable. Only addresses on
+/// domains NOT in the static list fall through to the registry, where a domain
+/// must be `active` (nameservers verified + Email Routing live) to count as
+/// owned. A `pending_ns` domain is deliberately *not* owned — we don't accept
+/// mail for it until onboarding completes.
+pub async fn domain_is_owned(env: &Env, cfg: &AppConfig, addr: &str) -> bool {
+    if cfg.owns_address(addr) {
+        return true;
+    }
+    let domain = match addr.rsplit_once('@') {
+        Some((_, d)) => d.to_lowercase(),
+        None => return false,
+    };
+    let reg = match crate::api::registry_stub(env) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    #[derive(serde::Deserialize)]
+    struct Owns {
+        owned: bool,
+    }
+    let path = format!("/domains/owns?domain={}", urlencoding::encode(&domain));
+    match crate::api::stub_json::<Owns>(&reg, worker::Method::Get, &path, None).await {
+        Ok(o) => o.owned,
+        Err(_) => false,
+    }
+}
+
 fn var(env: &Env, key: &str) -> Option<String> {
     // 1. Standard workers-rs API path. Works in #[event(fetch)] context.
     if let Ok(v) = env.var(key) {

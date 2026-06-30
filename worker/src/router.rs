@@ -111,6 +111,16 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
         ("POST", "/api/admin/addresses") => api::admin::add_address(req, &env, &cfg).await,
         ("DELETE", p) if p.starts_with("/api/admin/addresses/") => api::admin::remove_address(req, &env, &cfg).await,
         ("GET", "/api/admin/status") => api::admin::status(req, &env, &cfg).await,
+
+        // Multi-tenant domain onboarding (bring-your-own Cloudflare domain).
+        ("POST", "/api/admin/domains") => api::domains::create(req, &env, &cfg).await,
+        ("GET", "/api/admin/domains") => api::domains::list(req, &env, &cfg).await,
+        ("POST", p) if p.starts_with("/api/admin/domains/") && p.ends_with("/verify") => {
+            api::domains::verify(req, &env, &cfg).await
+        }
+        ("DELETE", p) if p.starts_with("/api/admin/domains/") => {
+            api::domains::remove(req, &env, &cfg).await
+        }
         ("POST", "/api/admin/backup") => api::admin::backup(req, &env, &cfg).await,
         ("GET", "/api/admin/backups") => api::admin::list_backups(req, &env, &cfg).await,
         ("POST", "/api/admin/restore") => api::admin::restore(req, &env, &cfg).await,
