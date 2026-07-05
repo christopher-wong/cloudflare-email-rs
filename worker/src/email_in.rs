@@ -290,7 +290,11 @@ async fn handle_impl(
         let mailbox = api::mailbox_stub(&env, &u.id)
             .map_err(|e| ApiError::Internal(e.to_string()))?;
         let msg_id = crate::ids::message();
-        let _: serde_json::Value = api::stub_json(
+        #[derive(serde::Deserialize)]
+        struct Inserted {
+            thread_id: String,
+        }
+        let inserted: Inserted = api::stub_json(
             &mailbox,
             Method::Post,
             "/messages",
@@ -375,6 +379,15 @@ async fn handle_impl(
         {
             console_log!("email_in.notify_failed err={e}");
         }
+
+        // Best-effort APNs push. Server-blind: the subject/body are E2E
+        // ciphertext, so the alert carries only the cleartext sender.
+        let sender_display = from_name
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| header_from_addr.clone());
+        crate::push::notify_new_mail(&env, &u.id, &sender_display, &inserted.thread_id, &msg_id)
+            .await;
     }
 
     Ok(())

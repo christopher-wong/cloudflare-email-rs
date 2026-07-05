@@ -78,8 +78,8 @@ pub async fn init(mut req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResul
 
 pub async fn part(mut req: HttpRequest, env: &Env, _cfg: &AppConfig) -> ApiResult<Response> {
     let s = require_auth(&req, env).await?;
-    let r2_key = header_str(&req, "x-r2-key")?;
-    let upload_id = header_str(&req, "x-upload-id")?;
+    let r2_key = decode_header(header_str(&req, "x-r2-key")?);
+    let upload_id = decode_header(header_str(&req, "x-upload-id")?);
     let part_number: u16 = header_str(&req, "x-part-number")?
         .parse()
         .map_err(|_| ApiError::BadRequest("x-part-number must be u16".into()))?;
@@ -235,6 +235,18 @@ fn header_str(req: &HttpRequest, name: &str) -> ApiResult<String> {
 /// The R2 key must belong to the authenticated user — the second path
 /// segment carries `user_id`. This prevents a compromised client from
 /// uploading parts into another user's in-flight multipart upload.
+/// Header params carry the r2_key and upload_id for `/parts`. The generated
+/// Swift OpenAPI client serializes header values with RFC 6570 URI encoding,
+/// which percent-escapes `/` in the r2_key (→ `attach%2F…`) and `+` `/` `=`
+/// in an R2 upload_id. The browser client sends them raw. Decode defensively
+/// so both wire forms resolve to the same value. Our keys/ids are base62 +
+/// `/`, never containing a literal `%`, so a no-op decode leaves them intact.
+fn decode_header(v: String) -> String {
+    urlencoding::decode(&v)
+        .map(|c| c.into_owned())
+        .unwrap_or(v)
+}
+
 fn require_owns(s: &AuthedSession, r2_key: &str) -> ApiResult<()> {
     let mut parts = r2_key.split('/');
     let _prefix = parts

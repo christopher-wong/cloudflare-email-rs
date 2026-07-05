@@ -58,6 +58,9 @@ impl DurableObject for MailboxDO {
             (Method::Delete, "/image-settings/domains") => self.remove_image_domain(req).await,
             (Method::Get, "/realtime") => self.realtime_upgrade(req).await,
             (Method::Post, "/notify") => self.notify(req).await,
+            (Method::Post, "/push/register") => self.register_push(req).await,
+            (Method::Post, "/push/unregister") => self.unregister_push(req).await,
+            (Method::Get, "/push/tokens") => self.list_push_tokens().await,
             (Method::Get, "/export") => self.export(req).await,
             (Method::Post, "/import") => self.import(req).await,
             _ => Response::error("not found", 404),
@@ -271,11 +274,20 @@ impl MailboxDO {
             .find(|(k, _)| k == "archived")
             .map(|(_, v)| v == "1")
             .unwrap_or(false);
-        // Inbox view: only threads with at least one inbound message. The Sent
-        // view fetches messages directly, so this filter is inbox-specific.
+        // Inbox view: only threads with at least one inbound message.
+        // Sent view: only threads with at least one outbound message.
+        // These are mutually exclusive filters; without one the list is
+        // unfiltered. (Previously `outbound_only` was silently ignored, so
+        // the Sent tab returned every thread — including receive-only ones —
+        // which is why received mail appeared in both Inbox and Sent.)
         let inbound_only: bool = url
             .query_pairs()
             .find(|(k, _)| k == "inbound_only")
+            .map(|(_, v)| v == "1")
+            .unwrap_or(false);
+        let outbound_only: bool = url
+            .query_pairs()
+            .find(|(k, _)| k == "outbound_only")
             .map(|(_, v)| v == "1")
             .unwrap_or(false);
         // Optional ?label=<label_id> — keep only threads that contain at
@@ -297,9 +309,12 @@ impl MailboxDO {
             unread_count: i64,
             has_starred: i64,
             archived: i64,
+            has_attachments: i64,
         }
-        let inbound_clause = if inbound_only {
+        let direction_clause = if inbound_only {
             " AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = threads.id AND m.direction = 'in')"
+        } else if outbound_only {
+            " AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = threads.id AND m.direction = 'out')"
         } else {
             ""
         };
@@ -313,9 +328,12 @@ impl MailboxDO {
         let rows: Vec<Row> = if let Some(b) = before {
             let sql_text = format!(
                 "SELECT id, subject_hint, participants, last_message_at,
-                    message_count, unread_count, has_starred, archived
+                    message_count, unread_count, has_starred, archived,
+                    EXISTS(SELECT 1 FROM messages m
+                           JOIN attachments a ON a.message_id = m.id
+                           WHERE m.thread_id = threads.id) AS has_attachments
                  FROM threads
-                 WHERE archived = ? AND last_message_at < ?{inbound_clause}{label_clause}
+                 WHERE archived = ? AND last_message_at < ?{direction_clause}{label_clause}
                  ORDER BY last_message_at DESC LIMIT ?"
             );
             let mut params: Vec<SqlStorageValue> = vec![(archived as i64).into(), b.into()];
@@ -325,9 +343,12 @@ impl MailboxDO {
         } else {
             let sql_text = format!(
                 "SELECT id, subject_hint, participants, last_message_at,
-                    message_count, unread_count, has_starred, archived
+                    message_count, unread_count, has_starred, archived,
+                    EXISTS(SELECT 1 FROM messages m
+                           JOIN attachments a ON a.message_id = m.id
+                           WHERE m.thread_id = threads.id) AS has_attachments
                  FROM threads
-                 WHERE archived = ?{inbound_clause}{label_clause}
+                 WHERE archived = ?{direction_clause}{label_clause}
                  ORDER BY last_message_at DESC LIMIT ?"
             );
             let mut params: Vec<SqlStorageValue> = vec![(archived as i64).into()];
@@ -347,15 +368,20 @@ impl MailboxDO {
             direction: String,
         }
         for r in rows {
-            // First message in each thread (oldest sent_at). Pulls just enough
-            // for the inbox row label without dragging the body across.
+            // Most recent message in each thread (newest sent_at). The row must
+            // show the latest sender + subject + snippet — a reply thread should
+            // surface whoever wrote last, not the original author. (This used to
+            // be `ORDER BY sent_at ASC`, which showed the thread's *first*
+            // sender: e.g. a reply from krego@ rendered as the original
+            // christopherwong@ sender.) The `first_*` field names on the wire
+            // are kept for compatibility; they now carry the latest message.
             let firsts: Vec<First> = self
                 .sql()
                 .exec(
                     "SELECT subject_ct, snippet_ct, from_addr, from_name, direction
                      FROM messages
                      WHERE thread_id = ?
-                     ORDER BY sent_at ASC LIMIT 1",
+                     ORDER BY sent_at DESC LIMIT 1",
                     Some(vec![r.id.clone().into()]),
                 )?
                 .to_array()?;
@@ -385,6 +411,7 @@ impl MailboxDO {
                 unread_count: r.unread_count,
                 has_starred: r.has_starred != 0,
                 archived: r.archived != 0,
+                has_attachments: r.has_attachments != 0,
             });
         }
         Response::from_json(&out)
@@ -660,6 +687,56 @@ impl MailboxDO {
         let body: serde_json::Value = req.json().await.unwrap_or(serde_json::Value::Null);
         self.broadcast(&body);
         Response::ok("{}")
+    }
+
+    // ---- APNs device tokens ------------------------------------------------
+
+    async fn register_push(&self, mut req: Request) -> Result<Response> {
+        #[derive(Deserialize)]
+        struct Body {
+            token: String,
+            environment: Option<String>,
+        }
+        let b: Body = req.json().await?;
+        if b.token.is_empty() {
+            return Response::error("token required", 400);
+        }
+        let env = b.environment.unwrap_or_else(|| "production".into());
+        self.sql().exec(
+            "INSERT INTO push_tokens (token, environment, updated_at)
+             VALUES (?, ?, ?)
+             ON CONFLICT(token) DO UPDATE SET
+                environment = excluded.environment,
+                updated_at  = excluded.updated_at",
+            Some(vec![b.token.into(), env.into(), now_ms().into()]),
+        )?;
+        Response::from_json(&serde_json::json!({}))
+    }
+
+    async fn unregister_push(&self, mut req: Request) -> Result<Response> {
+        #[derive(Deserialize)]
+        struct Body {
+            token: String,
+        }
+        let b: Body = req.json().await?;
+        self.sql().exec(
+            "DELETE FROM push_tokens WHERE token = ?",
+            Some(vec![b.token.into()]),
+        )?;
+        Response::from_json(&serde_json::json!({}))
+    }
+
+    async fn list_push_tokens(&self) -> Result<Response> {
+        #[derive(Serialize, Deserialize)]
+        struct Row {
+            token: String,
+            environment: String,
+        }
+        let rows: Vec<Row> = self
+            .sql()
+            .exec("SELECT token, environment FROM push_tokens", None)?
+            .to_array()?;
+        Response::from_json(&rows)
     }
 
     async fn delete_thread(&self, req: Request) -> Result<Response> {
@@ -1284,6 +1361,9 @@ struct ThreadRow {
     unread_count: i64,
     has_starred: bool,
     archived: bool,
+    /// True if any message in the thread has an attachment — drives the
+    /// paperclip glyph in list rows without a per-thread fetch.
+    has_attachments: bool,
 }
 
 #[derive(Serialize)]
@@ -1493,6 +1573,13 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS image_domains (
         domain TEXT PRIMARY KEY,
         created_at INTEGER NOT NULL
+    )",
+    // APNs device tokens for this user's devices. `environment` is
+    // 'sandbox' or 'production' so the worker hits the right APNs host.
+    "CREATE TABLE IF NOT EXISTS push_tokens (
+        token TEXT PRIMARY KEY,
+        environment TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
     )",
 ];
 

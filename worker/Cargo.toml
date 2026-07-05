@@ -42,7 +42,7 @@ getrandom = { version = "0.2", features = ["js"] }
 zeroize = "1"
 
 # WebAuthn verification primitives
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "alloc"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "alloc", "pkcs8"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 rsa = { version = "0.9", default-features = false, features = ["sha2"] }
 ciborium = "0.2"

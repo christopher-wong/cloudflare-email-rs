@@ -29,7 +29,15 @@
 		// domain (e.g. mail.middleseat.vc serving christopher@middleseat.vc).
 		"APP_HOST": "mail.middleseat.vc",
 		"APP_NAME": "cfmail",
-		"SESSION_TTL_DAYS": "30"
+		"SESSION_TTL_DAYS": "30",
+		// APNs push (token-based auth). TEAM_ID + TOPIC are taken from the
+		// iOS app's AASA (L6678C3HLZ.middleseat.bmail). Set APNS_KEY_ID to
+		// your APNs Auth Key's Key ID, and store the .p8 PEM as a secret:
+		//   wrangler secret put APNS_KEY   (paste the whole -----BEGIN...-----)
+		// Push is disabled (silent no-op) until APNS_KEY + APNS_KEY_ID are set.
+		"APNS_TEAM_ID": "L6678C3HLZ",
+		"APNS_TOPIC": "middleseat.bmail",
+		"APNS_KEY_ID": ""
 	},
 	"routes": [
 		{
