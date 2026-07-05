@@ -14,6 +14,7 @@ pub mod me;
 pub mod misc;
 pub mod orphan;
 pub mod passkeys;
+pub mod push;
 pub mod secret;
 pub mod uploads;
 
@@ -136,7 +137,21 @@ pub async fn stub_passthrough(
         init.with_headers(headers);
     }
     let req = Request::new_with_init(&url, &init).map_err(ApiError::from)?;
-    stub.fetch_with_request(req).await.map_err(ApiError::from)
+    let mut resp = stub.fetch_with_request(req).await.map_err(ApiError::from)?;
+    // DO handlers return JSON bodies, but many use `Response::ok("{}")`, which
+    // stamps `text/plain; charset=utf-8`. The generated iOS OpenAPI client
+    // strictly validates the declared `application/json` content type and
+    // fails otherwise (symptom: mark-as-read/unread → "Unexpected content
+    // type, expected: application/json, received: text/plain"). The browser
+    // client is lenient so it never noticed. Normalize successful pass-through
+    // responses to JSON. WebSocket upgrades bypass this helper (see
+    // `mail::realtime`), so touching the header here is safe.
+    if resp.status_code() < 300 {
+        resp.headers_mut()
+            .set("content-type", "application/json")
+            .map_err(ApiError::from)?;
+    }
+    Ok(resp)
 }
 
 pub fn json_ok<T: Serialize>(v: &T) -> ApiResult<Response> {

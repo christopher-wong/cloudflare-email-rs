@@ -57,7 +57,7 @@ impl AppConfig {
     }
 }
 
-fn var(env: &Env, key: &str) -> Option<String> {
+pub(crate) fn var(env: &Env, key: &str) -> Option<String> {
     // 1. Standard workers-rs API path. Works in #[event(fetch)] context.
     if let Ok(v) = env.var(key) {
         let s = v.to_string();

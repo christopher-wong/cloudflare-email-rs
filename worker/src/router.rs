@@ -53,6 +53,10 @@ pub async fn dispatch(req: HttpRequest, env: Env, _ctx: Context) -> Result<Respo
         ("GET", "/api/me/addresses") => api::me::list_addresses(req, &env, &cfg).await,
         ("GET", "/api/me/contacts") => api::me::list_contacts(req, &env, &cfg).await,
 
+        // APNs device-token registration for push notifications.
+        ("POST", "/api/push/register") => api::push::register(req, &env, &cfg).await,
+        ("POST", "/api/push/unregister") => api::push::unregister(req, &env, &cfg).await,
+
         // Per-user remote-image settings: the global "load by default"
         // flag plus the allowlist of sender domains the user trusts.
         ("GET", "/api/me/image-settings") => api::image_settings::get(req, &env, &cfg).await,

@@ -18,6 +18,7 @@ mod crypto;
 mod error;
 mod ids;
 mod mailbox;
+mod push;
 mod registry;
 mod router;
 mod session;
